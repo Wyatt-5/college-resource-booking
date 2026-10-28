@@ -186,6 +186,7 @@ export async function uploadItemImage(itemId, file) {
   formData.append('file', file)
   const response = await fetch(`${API_BASE}/items/${itemId}/images`, {
     method: 'POST',
+    headers: { Accept: 'application/json', ...authHeaders() },
     body: formData,
   })
   return parseResponse(response, '照片上传失败')
@@ -198,6 +199,7 @@ export async function deleteItemImage(itemId, imageId) {
   }
   const response = await fetch(`${API_BASE}/items/${itemId}/images/${imageId}`, {
     method: 'DELETE',
+    headers: { Accept: 'application/json', ...authHeaders() },
   })
   if (!response.ok) {
     await parseResponse(response, '移除照片失败')
@@ -231,7 +233,7 @@ export async function getPublicItems() {
       .filter((item) => item.status === 'ACTIVE')
       .map((item) => ({ ...item, unitSummary: unitSummary(item.id) }));
   }
-  return request('/items?status=ACTIVE');
+  return getJson('/items?status=ACTIVE')
 }
 
 export async function getItems() {
