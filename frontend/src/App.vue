@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { getLocations, getSessionAdmin, logoutAdmin } from './lib/api'
+import { getLocations, getSessionAdmin, logoutAdmin, MANAGEMENT_DEMO } from './lib/api'
 import AccountSettings from './components/AccountSettings.vue'
 import AdminLogin from './components/AdminLogin.vue'
 import ItemCreateForm from './components/ItemCreateForm.vue'
@@ -25,6 +25,7 @@ const groups = {
 }
 
 const mode = ref('user')
+const enableManagementDemo = MANAGEMENT_DEMO
 const activeSection = ref('locations')
 const adminUser = ref(getSessionAdmin())
 
@@ -137,7 +138,11 @@ onMounted(loadLocations)
       </nav>
 
       <main class="main-content">
-        <AdminLogin v-if="mode === 'admin' && !adminUser" @logged-in="onLoggedIn" />
+        <template v-if="mode === 'admin' && !adminUser">
+          <p v-if="enableManagementDemo" class="notice" role="status">管理端演示：使用模拟账号和临时数据，操作不会保存到数据库。</p>
+          <p v-else class="notice" role="status">请使用真实账号登录。账号服务尚未接入时无法登录，不会自动切换模拟账号。</p>
+          <AdminLogin @logged-in="onLoggedIn" />
+        </template>
 
         <template v-else-if="activeSection === 'locations'">
           <section class="hero">
@@ -182,14 +187,19 @@ onMounted(loadLocations)
 
         <ItemsBrowse v-else-if="activeSection === 'items'" />
 
-        <ItemCreateForm v-else-if="activeSection === 'itemCreate'" />
-        <ItemStockList v-else-if="activeSection === 'itemStock'" />
-        <ReturnVerification v-else-if="activeSection === 'returnCheck'" />
-        <AccountSettings
-          v-else-if="activeSection === 'account'"
+        <template v-else-if="mode === 'admin'">
+          <p v-if="enableManagementDemo" class="notice" role="status">管理端演示：操作仅改变临时数据，刷新页面会重置，不会保存到数据库。</p>
+          <ItemCreateForm v-if="activeSection === 'itemCreate'" />
+          <ItemStockList v-else-if="activeSection === 'itemStock'" />
+          <template v-else-if="activeSection === 'returnCheck'">
+            <ReturnVerification v-if="enableManagementDemo" />
+            <p v-else class="state-card">归还核验等待预约状态与权限模块接入，当前未开放。</p>
+          </template>
+          <AccountSettings v-else-if="activeSection === 'account'"
           @profile-changed="adminUser = $event"
           @password-changed="onLogout"
-        />
+          />
+        </template>
 
         <section v-else class="placeholder" aria-live="polite">
           <p class="eyebrow">{{ groups[sections.find((item) => item.key === activeSection)?.group]?.label }}</p>

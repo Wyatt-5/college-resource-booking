@@ -1,6 +1,8 @@
 // Keep API paths relative to the website origin. Vite proxies /api during local development;
 // production deployment must route /api to the backend as well.
 const API_BASE = '/api/v1'
+import { createPublicCatalog } from './publicCatalog.js'
+const publicCatalog = createPublicCatalog()
 
 export async function getLocations() {
   let response
@@ -31,11 +33,12 @@ export async function getLocations() {
 }
 
 // ---------------------------------------------------------------------------
-// 物品接口（3 号后端尚未实现）。USE_MOCK_ITEMS = true 时按接口契约返回模拟
-// 响应，字段与 docs/开发约束.md 5.2 / 5.4 保持一致；后端联调通过后改为
-// false 即可切换到真实接口，页面代码无需改动。
+// 管理操作暂保留 PR #2 的模拟实现；App 仅在显式启用开发演示时展示。
+// 用户端 getPublicItems/getPublicItem 始终调用真实接口，不受此开关影响。
+// 管理接口和身份接口尚未全部实现，不得整体关闭开关并标记为联调完成。
 // ---------------------------------------------------------------------------
-const USE_MOCK_ITEMS = true
+export const MANAGEMENT_DEMO = import.meta.env?.DEV === true && import.meta.env?.VITE_ENABLE_MANAGEMENT_DEMO === 'true'
+const USE_MOCK_ITEMS = MANAGEMENT_DEMO
 
 // 后端未启动时的演示兜底地点，仅供管理页面在 mock 阶段展示
 export const FALLBACK_LOCATIONS = [
@@ -112,7 +115,9 @@ function apiFailure(code, message, details = {}) {
 async function parseResponse(response, fallbackMessage) {
   const data = await response.json().catch(() => null)
   if (!response.ok) {
-    throw apiFailure(data?.code, data?.message || `${fallbackMessage}（HTTP ${response.status}）`, data?.details)
+    const error = apiFailure(data?.code, data?.message || `${fallbackMessage}（HTTP ${response.status}）`, data?.details)
+    error.status = response.status
+    throw error
   }
   return data
 }
@@ -227,21 +232,22 @@ export async function createItemUnit(itemId, unitCode) {
 // ---- 库存管理（4 号页面：ItemStockList） ----
 
 // 用户端浏览：只看启用中的物品
-export async function getPublicItems() {
-  if (USE_MOCK_ITEMS) {
-    return mockItems
-      .filter((item) => item.status === 'ACTIVE')
-      .map((item) => ({ ...item, unitSummary: unitSummary(item.id) }));
-  }
-  return getJson('/items?status=ACTIVE')
+export const getPublicItems = (filters) => publicCatalog.list(filters)
+export const getPublicItem = (id) => publicCatalog.detail(id)
+export const getItemImages = (id) => getJson(`/items/${id}/images`)
+export async function readItemImage(itemId, imageId) {
+  const response = await fetch(`${API_BASE}/items/${itemId}/images/${imageId}`, { headers: authHeaders() })
+  if (!response.ok) await parseResponse(response, '图片读取失败')
+  return response.blob()
 }
 
-export async function getItems() {
+export async function getItems({ page = 0, size = 20 } = {}) {
   if (USE_MOCK_ITEMS) {
     await mockDelay()
-    return mockItems.map((item) => ({ ...item, unitSummary: unitSummary(item.id) }))
+    const content = mockItems.slice(page * size, (page + 1) * size).map((item) => ({ ...item, unitSummary: unitSummary(item.id) }))
+    return { content, page, size, totalElements: mockItems.length }
   }
-  return getJson('/items')
+  return getJson(`/items?scope=managed&page=${page}&size=${size}`)
 }
 
 export async function getItemUnits(itemId) {
@@ -345,7 +351,14 @@ export async function loginAdmin(account, password) {
     currentAdmin = found
     return { token: 'mock-token', user: publicAdmin(found) }
   }
-  const data = await postJson('/auth/login', { account, password })
+  let data
+  try {
+    data = await postJson('/auth/login', { account, password })
+  } catch (error) {
+    if (error.status === 404 || error.status === 405) throw new Error('账号登录接口尚未接入，请与账号模块负责人联调。')
+    throw error
+  }
+  if (!data?.user || !data?.token) throw new Error('登录响应格式不符，请核对账号模块接口。')
   authToken = data.token
   currentAdmin = data.user
   return data

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   createItem,
   createItemUnit,
@@ -7,6 +7,7 @@ import {
   FALLBACK_LOCATIONS,
   getLocations,
   uploadItemImage,
+  MANAGEMENT_DEMO,
 } from '../lib/api'
 
 const MAX_PHOTOS = 6
@@ -68,11 +69,11 @@ function locationName(locationId) {
 async function loadLocations() {
   locationsError.value = ''
   try {
-    locations.value = await getLocations()
+    locations.value = (await getLocations()).filter(location => location.status === 'ACTIVE')
   } catch {
     // 后端未启动时使用兜底模拟地点，保证上架表单可以离线演示
-    locations.value = FALLBACK_LOCATIONS
-    locationsError.value = '暂时无法获取地点列表，当前显示示例地点。'
+    locations.value = MANAGEMENT_DEMO ? FALLBACK_LOCATIONS : []
+    locationsError.value = MANAGEMENT_DEMO ? '当前显示演示地点。' : '地点读取失败，请启动后端后重试，不能使用示例地点上架。'
   }
 }
 
@@ -126,12 +127,12 @@ function onPickPhotos(event) {
 }
 
 async function uploadPhoto(file) {
-  const entry = {
+  const entry = reactive({
     localId: (localImageSeq += 1),
     previewUrl: URL.createObjectURL(file),
     fileName: file.name,
     uploading: true,
-  }
+  })
   images.value.push(entry)
   try {
     const saved = await uploadItemImage(createdItem.value.id, file)
@@ -179,6 +180,7 @@ async function addUnit() {
 }
 
 function resetAll() {
+  if (images.value.some(image => image.uploading) || unitSaving.value) return
   for (const image of images.value) URL.revokeObjectURL(image.previewUrl)
   finishMessage.value = `「${createdItem.value.name}」上架完成，共 ${images.value.length} 张照片、${units.value.length} 件实物。`
   form.value = emptyForm()
@@ -190,6 +192,7 @@ function resetAll() {
 }
 
 onMounted(loadLocations)
+onUnmounted(() => { for (const image of images.value) URL.revokeObjectURL(image.previewUrl) })
 </script>
 
 <template>
@@ -275,10 +278,12 @@ onMounted(loadLocations)
           <div class="field">
             <label for="max-days">单次最长借用（天）</label>
             <input id="max-days" v-model.number="form.rules.maxBorrowDays" type="number" min="1" max="90">
+            <p v-if="fieldErrors['rules.maxBorrowDays']" class="field-error">{{ fieldErrors['rules.maxBorrowDays'] }}</p>
           </div>
           <div class="field">
             <label for="advance-days">可提前预约（天）</label>
             <input id="advance-days" v-model.number="form.rules.advanceDays" type="number" min="0" max="60">
+            <p v-if="fieldErrors['rules.advanceDays']" class="field-error">{{ fieldErrors['rules.advanceDays'] }}</p>
           </div>
         </div>
       </fieldset>
@@ -376,7 +381,7 @@ onMounted(loadLocations)
         <p v-else class="card-hint">还没有录入实物编号，可以稍后在「库存管理」中补录。</p>
       </div>
 
-      <button type="button" class="primary-button" @click="resetAll">完成上架，继续下一件</button>
+      <button type="button" class="primary-button" :disabled="images.some(image => image.uploading) || unitSaving" @click="resetAll">完成上架，继续下一件</button>
     </template>
   </section>
 </template>

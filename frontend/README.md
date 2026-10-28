@@ -1,6 +1,6 @@
-# 前端开发骨架
+# 前端运行与接口对接
 
-Vue 3 + Vite。当前仅实现地点展示：页面请求 `GET /api/v1/locations`，其他导航页面明确标记为待开发，不具备登录、预约、审批或借还能力。
+Vue 3 + Vite。沿用前端 PR #2（提交 `8d5fbd2`）的布局。地点、物品浏览、上架、照片和实物维护默认调用真实接口；管理操作需要账号模块建立可信身份。正式登录和真实预约尚未接入，不能把测试身份的验证当作全系统联调完成。
 
 ## 环境与启动
 
@@ -17,11 +17,26 @@ npm run dev
 
 仓库包含 `package-lock.json`，所有组员使用 `npm ci` 按锁文件安装。构建检查：`npm run build`。
 
+接口客户端测试：`npm test`。默认后端代理为 8080；需要联调其他端口时，在启动 Vite 的同一 PowerShell 中设置 `$env:API_PROXY_TARGET='http://127.0.0.1:18080'`。浏览器仍只请求相对路径 `/api`，这个变量不会改变数据库端口。
+
+## 真实功能与开发演示
+
+- 用户端物品浏览始终请求真实数据；后端异常时显示错误，不退回模拟物品。
+- 浏览页显式传page/size并读取 `content`、`totalElements`，每页12条。筛选在分页前执行。后端也兼容不传分页参数时的原数组格式。
+- 物品沿用清单的 `unitSummary.total/available`、`rules.advanceDays/maxBorrowDays`，时长按天显示；null表示“尚未配置”，不解释为无限制。
+- 详情通过 `GET /items/{id}` 独立读取，停用或删除后显示错误，不继续显示旧详情。
+- 管理端默认使用真实登录接口，返回404时明确提示账号模块未接入。不会自动接受模拟账号或回退模拟数据。
+- 如需看原PR页面演示，在 `frontend/.env.local` 设置 `VITE_ENABLE_MANAGEMENT_DEMO=true` 并重启开发服务器；仅开发模式有效，界面明确提示操作不写数据库。
+- 上架带Idempotency-Key，照片上传/读取/删除带鉴权头；库存显示后端摘要。正式身份接入前，可用测试源目录中的本机测试入口验证业务链路，该入口不会进入生产JAR。
+- 归还核验页面暂不开放真实操作，等待预约适配器接入；账号资料管理等待账号模块实现。
+
 ## 目录约定
 
 ```text
-src/App.vue       当前导航和地点页面，待后续按功能拆分
-src/lib/api.js    对后端接口的调用；页面不要直接拼接服务器地址
+src/App.vue       用户端/管理端导航和开发演示入口
+src/components/ItemsBrowse.vue 真实物品浏览页面
+src/lib/publicCatalog.js      真实目录接口客户端
+src/lib/api.js    统一调用入口及尚待替换的管理演示
 src/styles.css    响应式基础样式
 vite.config.js    本地开发时 /api 的后端代理
 ```
