@@ -18,7 +18,7 @@
           </div>
           <div class="profile-row">
             <span class="profile-label">角色</span>
-            <span class="profile-value">管理员</span>
+            <span class="profile-value">{{ roleLabels(profile.roles) }}</span>
           </div>
           <div class="profile-row">
             <span class="profile-label">所属部门</span>
@@ -80,7 +80,7 @@
         <p v-if="adminsLoading" class="state-card">读取中…</p>
         <table v-else class="admin-table">
           <thead>
-            <tr><th>姓名</th><th>账号</th><th>所属部门</th><th>最近登录</th></tr>
+            <tr><th>姓名</th><th>账号</th><th>角色</th><th>所属部门</th><th>最近登录</th></tr>
           </thead>
           <tbody>
             <tr v-for="admin in admins" :key="admin.id">
@@ -89,6 +89,7 @@
                 <span v-if="admin.account === profile.account" class="status-badge badge-ok">当前登录</span>
               </td>
               <td class="mono">{{ admin.account }}</td>
+              <td>{{ roleLabels(admin.roles) }}</td>
               <td>{{ admin.department || '—' }}</td>
               <td>{{ formatTime(admin.lastLoginAt) }}</td>
             </tr>
@@ -104,6 +105,19 @@ import { onMounted, reactive, ref } from 'vue'
 import { changeMyPassword, getAdminList, getSessionAdmin, updateMyProfile } from '../lib/api'
 
 const emit = defineEmits(['profile-changed', 'password-changed'])
+
+const ROLE_LABELS = {
+  USER: '普通用户',
+  COUNSELOR_ADMIN: '辅导员管理员',
+  RESOURCE_MANAGER: '资源管理员',
+  REVIEWER: '审核员',
+  SYSTEM_ADMIN: '系统管理员',
+}
+
+function roleLabels(roles) {
+  const list = Array.isArray(roles) && roles.length ? roles : ['USER']
+  return list.map((role) => ROLE_LABELS[role] || role).join('、')
+}
 
 const profile = ref(getSessionAdmin() || {})
 const profileForm = reactive({

@@ -301,7 +301,8 @@ const mockAdmins = [
     account: 'admin',
     password: 'admin123',
     name: '陈老师',
-    role: 'ADMIN',
+    roles: ['COUNSELOR_ADMIN'],
+    resourceScopes: [1, 2],
     department: '学院办公室',
     email: 'chen@mcs.stu.edu.cn',
     phone: '13800000001',
@@ -313,7 +314,8 @@ const mockAdmins = [
     account: 'equipment',
     password: 'equip123',
     name: '林老师',
-    role: 'ADMIN',
+    roles: ['RESOURCE_MANAGER', 'REVIEWER'],
+    resourceScopes: [2],
     department: '实验中心',
     email: 'lin@mcs.stu.edu.cn',
     phone: '13800000002',
@@ -388,5 +390,5 @@ export async function getAdminList() {
     await mockDelay(250)
     return mockAdmins.map(publicAdmin)
   }
-  return getJson('/users?role=ADMIN')
+  return getJson('/users')
 }

@@ -284,12 +284,13 @@ paths:
 
   /users:
     get:
-      summary: 用户列表；管理端用 role=ADMIN 查看管理员名单
+      summary: 用户列表；管理端可按单个角色筛选
       operationId: listUsers
       parameters:
         - name: role
           in: query
-          schema: { type: string, enum: [ADMIN, USER] }
+          schema: { $ref: '#/components/schemas/UserRole' }
+          description: 用户可同时具有多个角色，命中该角色即返回
       responses:
         '200':
           description: 用户列表
@@ -506,16 +507,28 @@ components:
       properties:
         token:
           type: string
-          description: 会话令牌；后续请求通过 Authorization: Bearer 携带
+          description: '会话令牌；后续请求通过 Authorization: Bearer 携带'
         user: { $ref: '#/components/schemas/AdminProfile' }
+    UserRole:
+      type: string
+      description: 开发约束 2.2 定义的五种角色；管理权限与审核权限分开
+      enum: [USER, COUNSELOR_ADMIN, RESOURCE_MANAGER, REVIEWER, SYSTEM_ADMIN]
     AdminProfile:
       type: object
-      required: [id, account, name, role]
+      description: 角色与授权字段以 1 号（身份与权限接口）最终实现为准；业务审批须遵守禁止自审规则
+      required: [id, account, name, roles]
       properties:
         id: { type: integer, format: int64 }
         account: { type: string, example: admin }
         name: { type: string, example: 陈老师 }
-        role: { type: string, enum: [ADMIN, USER] }
+        roles:
+          type: array
+          items: { $ref: '#/components/schemas/UserRole' }
+          description: 一名用户可同时具有多种角色（如资源管理员兼任审核员）
+        resourceScopes:
+          type: array
+          items: { type: integer, format: int64 }
+          description: 授权可管理的地点 id 集合（按资源记录授权，不按姓名写代码）
         department: { type: string, example: 学院办公室 }
         email: { type: string, format: email }
         phone: { type: string }
