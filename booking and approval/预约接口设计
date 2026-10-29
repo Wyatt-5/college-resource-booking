@@ -1,0 +1,1017 @@
+# 预约与审批接口设计
+
+> 对应 Issue：#4（[预约] 预约状态机、时间冲突检测与单人审批接口）
+> 负责人：5 号（预约与审批后端）
+> 状态：**待评审**（需 1 号确认认证接缝、3 号确认 catalog 对接、6 号确认日历脱敏）
+> 依据：`docs/开发约束.md` 5.3 / 5.4、`docs/预约状态图.md`、`docs/预约并发测试用例.md`
+> 契约落地位置：`contracts/openapi/openapi.yaml`
+
+## 0. 本文定位与基准
+
+三份交付物是**一条链**，不是三份平行文档：
+
+```
+预约状态图.md      定义"什么状态合法、什么迁移合法"        （状态名与迁移编号 T1–T12 / H1–H7 的唯一来源）
+预约接口设计.md    定义"哪个 HTTP 动作触发哪条迁移"         （本文；路径、字段、错误码的唯一来源）
+预约并发测试用例.md 定义"怎么证明它在并发下也成立"          （断言对象是前两份的产物）
+```
+
+**基准事实（写作时实测，不是假设）**：
+
+| 事实 | 依据 |
+|---|---|
+| `develop` 上 `openapi.yaml` 只有 `/health`、`/locations` 两个 path | `git show origin/develop:contracts/openapi/openapi.yaml` |
+| PR #2 分支（`8d5fbd2`，594 行）已有 13 个 path，其中 `/reservations` 在 **208 行且只有 `get`** | 同上 |
+| 已落地代码只有 `location`、`health` 两个包，错误体是 `ApiError(code,message,details,requestId)` | `backend/src/main/java/.../common/` |
+| catalog 模块（PR #5）已建立分页、幂等、权限、错误码四项约定 | `feature/catalog-read` 分支 |
+| `V3`、`V4` 已被 catalog 占用 | `V3__create_catalog.sql`、`V4__align_catalog_contract_and_add_audit.sql` |
+
+因此本文定义的接口**从零起草**，且**迁移编号从 `V5` 起**。
+
+## 1. 通用约定（全部对齐已落地代码，不另立一套）
+
+### 1.1 基础
+
+| 项 | 约定 | 与现有代码的一致性 |
+|---|---|---|
+| Base path | `/api/v1` | `LocationController`、`ItemController` 均为 `/api/v1/...` |
+| 传输 | JSON，`Content-Type: application/json`；仅归还提交用 `multipart/form-data` | `ItemImageController` 用 multipart |
+| 时间 | ISO-8601 带偏移，服务端存 `TIMESTAMPTZ`，出参统一 `2026-11-03T01:00:00Z` | `V1` 迁移用 `TIMESTAMPTZ` |
+| 区间语义 | **左闭右开** `[startAt, endAt)` | 与状态图 `'[)'`、`tstzrange` 一致 |
+| 字段命名 | 出参 camelCase；数据库 snake_case | `Item` record 用 camelCase |
+| 未知字段 | **拒绝**，返回 `400 VALIDATION_ERROR`，`details` 指出字段名 | `ItemInput.parse` 用白名单校验，同款做法 |
+
+### 1.2 响应信封与分页
+
+与 `ItemController` 完全一致，**不引入新的分页格式**：
+
+```java
+// 与 catalog.ItemPage 同构，避免前端写两套解析
+public record PageResult<T>(List<T> content, int page, int size, long totalElements) {}
+```
+
+| 场景 | 响应 |
+|---|---|
+| 带 `page` / `size` 参数 | `PageResult<T>`，并附响应头 `X-Total-Count: <totalElements>` |
+| 不带分页参数（列表很短） | **裸数组** `T[]`，仍带 `X-Total-Count` |
+| 分页参数非法（`page<0`、`size<1`、`size>100`） | `400 VALIDATION_ERROR`，`details.page` / `details.size` |
+
+参数默认值：`page=0`、`size=20`、上限 `size<=100`。
+
+### 1.3 幂等
+
+写操作（`POST` 全部）**必须**带 `Idempotency-Key`，规则与 `catalog.CatalogOperations.once` 一致：
+
+| 检查 | 行为 |
+|---|---|
+| 未带 / 空白 / 超过 200 字符 | `400 VALIDATION_ERROR`，`details.Idempotency-Key` |
+| key 已存在且 `payload_hash` 相同 | 返回**首次结果**（同状态码、同响应体），不重复执行 |
+| key 已存在但 `payload_hash` 不同 | `409 IDEMPOTENCY_CONFLICT` |
+| `GET` | 不需要 |
+
+表结构与我方实现（**与 `catalog_idempotency` 同构，便于日后合并为一张表**）：
+
+```sql
+CREATE TABLE reservation_idempotency (
+    actor       VARCHAR(200) NOT NULL,
+    action      VARCHAR(100) NOT NULL,   -- CREATE / DECIDE:<id> / CANCEL:<id> / PICKUP:<id> / OVERRIDE:<id> / SUBMIT_RETURN:<id>
+    request_key VARCHAR(200) NOT NULL,
+    payload_hash VARCHAR(64) NOT NULL,
+    resource_id BIGINT      NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (actor, action, request_key)
+);
+```
+
+加锁方式沿用 catalog 已验证的写法（事务级，异常自动释放）：
+
+```sql
+SELECT pg_advisory_xact_lock(hashtextextended(<拼接后的命名空间字符串>, 0));
+```
+
+### 1.4 统一错误体
+
+直接复用 `common.ApiError`，**不新增错误体类型**：
+
+```json
+{
+  "code": "RESOURCE_CONFLICT",
+  "message": "该时段已被占用",
+  "details": { "conflicts": [{ "resourceType": "ROOM", "resourceId": 7,
+                               "startAt": "2026-11-03T01:00:00Z",
+                               "endAt":   "2026-11-03T02:00:00Z" }] },
+  "requestId": "0f4b1c2e-..."
+}
+```
+
+响应头带 `X-Request-Id`，与 `ApiExceptionHandler.error()` 的现有行为一致。
+
+### 1.5 权限模型
+
+`开发约束.md` 定义四类角色。本文只依赖「角色 + 地点范围」两个维度，不引入更细的规则：
+
+```java
+// 建议放在 common.security；字段与 catalog.CatalogAccess.Actor 保持一致
+public record CurrentUser(long id, Role role, boolean allLocations, Set<Long> locations) {
+    public boolean manages(long locationId) { return allLocations || locations.contains(locationId); }
+}
+```
+
+| 角色 | 值 | 能做什么 |
+|---|---|---|
+| 普通用户 | `USER` | 创建/查看自己的预约、取消自己的、取件、提交归还 |
+| 资源管理员 | `RESOURCE_MANAGER` | 审批**管理范围内**的申请、核验归还、管理会议室与停用时段 |
+| 辅导员管理员 | `COUNSELOR_ADMIN` | 在 `RESOURCE_MANAGER` 之上：优先级更高、可 `override` 已确认的会议室 |
+| 系统管理员 | `SYSTEM_ADMIN` | 全部；**但不豁免自审禁止**（状态图 I2） |
+
+**认证接缝（需 1 号确认）**：本文假设 1 号提供 `CurrentUserPort.current()`。catalog 的 `CatalogAccess` 与我的接口是**同一件事的两个名字**，建议 1 号实现一次、两边适配，不要各建一套。测试用 `@MockitoBean` 替换，**禁止**在生产代码加 `X-Test-User` 后门（见并发测试用例 1.6）。
+
+## 2. 端点总表
+
+共 17 个端点，分两期交付。`P1` 为本期（第 2–3 周），`P2` 为后续。
+
+| # | 方法与路径 | 用途 | 权限 | 幂等 | 期 |
+|---|---|---|---|---|---|
+| 1 | `GET /rooms` | 会议室列表 | 已登录 | — | P1 |
+| 2 | `GET /rooms/{roomId}` | 会议室详情 | 已登录 | — | P1 |
+| 3 | `POST /rooms` | 新增会议室 | `RESOURCE_MANAGER` | ✓ | P1 |
+| 4 | `PATCH /rooms/{roomId}` | 调整会议室 | `RESOURCE_MANAGER` | ✓ | P1 |
+| 5 | `GET /rooms/{roomId}/calendar` | 占用日历（脱敏） | 已登录 | — | P1 |
+| 6 | `POST /rooms/{roomId}/blackouts` | 新增停用时段 | `RESOURCE_MANAGER` | ✓ | P2 |
+| 7 | `DELETE /rooms/{roomId}/blackouts/{blackoutId}` | 删除停用时段 | `RESOURCE_MANAGER` | ✓ | P2 |
+| 8 | `POST /reservations` | 创建预约 | `USER` 及以上 | ✓ | **P1** |
+| 9 | `GET /reservations/{id}` | 预约详情 | 本人 / 管理范围内 | — | **P1** |
+| 10 | `GET /me/reservations` | 我的预约 | 本人 | — | **P1** |
+| 11 | `GET /reservations` | 管理端筛选 | `RESOURCE_MANAGER` 及以上 | — | **P1** |
+| 12 | `POST /reservations/{id}/cancel` | 取消 | 本人 / 管理员 | ✓ | **P1** |
+| 13 | `GET /approval-queue` | 审核工作台 | `RESOURCE_MANAGER`、`COUNSELOR_ADMIN` | — | **P1** |
+| 14 | `POST /reservations/{id}/decision` | 单人审批 | 同上（且非申请人） | ✓ | **P1** |
+| 15 | `POST /reservations/{id}/pickup` | 确认取件 | 本人 | ✓ | **P1** |
+| 16 | `POST /reservations/{id}/return-submission` | 提交归还 | 本人 | ✓ | P1 |
+| 17 | `POST /reservations/{id}/return-verification` | 归还核验 | `RESOURCE_MANAGER` | ✓ | P1 |
+| 18 | `POST /reservations/{id}/override` | 辅导员强制占用 | `COUNSELOR_ADMIN` | ✓ | P1 |
+
+> 端点 17 由 catalog 的 `ReturnVerificationController` 现已声明（见第 7 节），**实现归属要以第 7 节的结论为准**，不能两边都写。
+
+## 3. 数据模型
+
+### 3.1 预约主对象
+
+```java
+public record ReservationSummary(
+    long id,
+    String resourceType,        // ROOM | ITEM
+    Long roomId,                // resourceType=ROOM 时非空
+    Long itemId,                // resourceType=ITEM 时非空
+    int quantity,               // 会议室恒为 1
+    Instant startAt, Instant endAt,
+    String status,              // 7 值主状态，见状态图
+    String handoverStatus,      // 5 值交接状态；会议室为 null 或 COMPLETED
+    String applicantId, String applicantName,
+    String purpose,
+    int priorityTier,           // 0=COUNSELOR_ADMIN，1=其他；提交时冻结
+    long submissionSeq,         // 同资源同时段的排队序
+    boolean overdue,            // 派生字段，不落库
+    Instant createdAt) {}
+```
+
+三个**必须固定**的设计点：
+
+1. **`status` 与 `handoverStatus` 两列分开**，理由见状态图第 1 节。对外两个字段，不要合成一个枚举。
+2. **`overdue` 是派生值**：`now() > endAt AND handoverStatus IS DISTINCT FROM 'COMPLETED'`。不加 `OVERDUE` 状态，避免状态机多一个分支。
+3. **`priorityTier` 在提交时冻结**：`COUNSELOR_ADMIN` → 0，其余 → 1。不在审批时实时读角色，否则学院后台调一次授权，已排队申请的顺序会漂移（状态图 I4）。
+
+详情比列表多两块：
+
+```java
+public record ReservationDetail(
+    ReservationSummary summary,
+    ApprovalInfo approval,      // 未审批时为 null
+    HandoverInfo handover,      // 会议室为 null
+    List<ReturnPhoto> photos) {} // 仅归还相关时有值
+
+public record ApprovalInfo(long approverId, String approverName,
+                           String decision, String reason, Instant decidedAt) {}
+public record HandoverInfo(List<Long> unitIds, String unitCode,
+                           Instant pickedUpAt, Instant returnedAt) {}
+```
+
+### 3.2 其他对象
+
+| 对象 | 字段 | 说明 |
+|---|---|---|
+| `Room` | `id, locationId, name, capacity, openFrom, openTo, status, note` | `status: ACTIVE \| INACTIVE` |
+| `CalendarDay` | `date, slots: [{startAt, endAt, state}]` | `state: FREE \| OCCUPIED \| BLACKOUT`；**不含申请人、不含事由** |
+| `Blackout` | `id, roomId, startAt, endAt, reason` | `reason` 必填 |
+| `ApprovalQueueItem` | `id, resourceType, resourceName, applicantName, startAt, endAt, purpose, priorityTier, submissionSeq, waitingSince` | 按 `priorityTier ASC, submissionSeq ASC` 排序 |
+| `ReturnPhoto` | `id, storageKey, uploadedAt` | 由 booking 存 `return_photos`，不写 `item_images` |
+| `DecisionInput` | `decision: APPROVE \| REJECT`, `reason` | `REJECT` 时 `reason` 必填 |
+| `OverrideInput` | `action: CANCEL \| RESCHEDULE`, `reason`, `replacementSlot?` | P1 只实现 `CANCEL` |
+
+## 4. 逐接口定义
+
+### 4.1 `POST /reservations` —— 创建预约（T1 / T2 / T3）
+
+| 项 | 内容 |
+|---|---|
+| 权限 | `USER` 及以上；只能为自己创建（`applicantId` 取自会话，**不接受请求体传入**） |
+| 幂等 | 必须带 `Idempotency-Key` |
+| 请求 | `{resourceType, resourceId, startAt, endAt, purpose, quantity?, acceptWaitlist?}` |
+| 校验 | `resourceType ∈ {ROOM, ITEM}`；`endAt > startAt`；`startAt ≥ now()-60s`；`quantity ≥ 1`（仅 ITEM）；`purpose` ≤ 200 字 |
+| 成功 | `201 Created` + `Location: /api/v1/reservations/{id}`；体：`{id, status, handoverStatus, submissionSeq, priorityTier}` |
+| 失败 | `400 VALIDATION_ERROR`（字段级）、`403 FORBIDDEN`（地点超范围）、`404 NOT_FOUND`（资源不存在/停用）、`409 RESOURCE_CONFLICT`（时段被占/容量不足且未接受候补）、`409 INVALID_STATE`（资源 `INACTIVE`） |
+
+**状态判定（按此顺序，不能颠倒）**：
+
+| 条件 | 落库状态 | 迁移 |
+|---|---|---|
+| 物品 `is_valuable = false` 且容量足够 | `CONFIRMED` + `handoverStatus=NOT_PICKED_UP` | T1 → H1 |
+| 贵重物品 或 会议室 | `PENDING_APPROVAL` | T2 |
+| 容量不足且 `acceptWaitlist=true` | `WAITLISTED` | T3 |
+| 容量不足且未接受候补 | 不落库，`409 RESOURCE_CONFLICT` | — |
+
+会议室走 `PENDING_APPROVAL` 是硬规则：`开发约束.md` 5.3 要求会议室申请由管理员审批。**不要**因为"会议室不贵重"就自动确认。
+
+请求/响应示例：
+
+```json
+// POST /api/v1/reservations    Idempotency-Key: 8f3a1c9e-2b7d-4e55-9a01-3c6d2f8b1e4a
+{ "resourceType": "ROOM", "resourceId": 3,
+  "startAt": "2026-11-03T01:00:00Z", "endAt": "2026-11-03T02:00:00Z",
+  "purpose": "毕设小组讨论" }
+
+// 201 Created
+{ "id": 1024, "status": "PENDING_APPROVAL", "handoverStatus": null,
+  "submissionSeq": 17, "priorityTier": 1 }
+
+// 409 RESOURCE_CONFLICT
+{ "code": "RESOURCE_CONFLICT", "message": "该时段已被占用",
+  "details": { "conflicts": [ { "resourceType": "ROOM", "resourceId": 3,
+      "startAt": "2026-11-03T01:00:00Z", "endAt": "2026-11-03T02:00:00Z" } ] },
+  "requestId": "..." }
+```
+
+**并发实现**：会议室用 `EXCLUDE USING gist`（状态图 5.3 给出 DDL），物品容量用 `pg_advisory_xact_lock` 后重算。冲突统一映射 `SQLState 23P01` → `409 RESOURCE_CONFLICT`。
+
+### 4.2 `GET /reservations/{id}` —— 详情
+
+| 项 | 内容 |
+|---|---|
+| 权限 | 申请人本人；或 `manages(locationId)` 的管理员 |
+| 响应 | `ReservationDetail` |
+| 失败 | `404 NOT_FOUND`（**越权也返回 404，不返回 403**，避免用存在性探测他人数据） |
+
+### 4.3 `GET /me/reservations` —— 我的预约
+
+| 项 | 内容 |
+|---|---|
+| 参数 | `status?`、`handoverStatus?`、`from?`、`to?`、`page`、`size` |
+| 响应 | `PageResult<ReservationSummary>`，`ORDER BY startAt DESC` |
+| 备注 | 只返回 `applicantId = 当前用户`，**忽略任何客户端传入的 `applicantId`** |
+
+### 4.4 `GET /reservations` —— 管理端筛选
+
+| 项 | 内容 |
+|---|---|
+| 权限 | `RESOURCE_MANAGER` 及以上；普通用户 `403 FORBIDDEN` |
+| 参数 | `resourceType?`、`resourceId?`、`status?`、`handoverStatus?`、`applicantId?`、`locationId?`、`from?`、`to?`、`page`、`size` |
+| 响应 | `PageResult<ReservationSummary>` |
+| 越权处理 | **授权范围必须进 SQL 的 `WHERE`**（`location_id IN (...)`），不能查完再内存过滤 —— 否则分页会错位、`X-Total-Count` 会泄露总数（测试用例 12 断言这一点） |
+
+### 4.5 `POST /reservations/{id}/cancel` —— 取消（T7 / T9 / T10）
+
+| 项 | 内容 |
+|---|---|
+| 权限 | 申请人本人；或管理员（需 `reason`，写入审计） |
+| 请求 | `{reason?}` |
+| 允许的起始状态 | `PENDING_APPROVAL`、`WAITLISTED`、`CONFIRMED` 且 `handoverStatus` 为 `null`/`NOT_PICKED_UP` |
+| 成功 | `200`，体：`{id, status:"CANCELLED", waitlistPromoted?: <新预约 id>}` |
+| 失败 | `409 INVALID_STATE`（已取件/已提交归还不能取消）、`403 FORBIDDEN`（非本人且无管理权限） |
+
+**必须同事务完成**：置 `CANCELLED` → 按 `priorityTier ASC, submissionSeq ASC` 找到最早候补 → 置 `CONFIRMED` → 写审计 → 写通知。**不要**等 worker。返回值里的 `waitlistPromoted` 让前端能提示"已为候补同学让出名额"。
+
+### 4.6 `GET /approval-queue` —— 审核工作台
+
+| 项 | 内容 |
+|---|---|
+| 权限 | `RESOURCE_MANAGER`、`COUNSELOR_ADMIN`（`SYSTEM_ADMIN` 亦可）；普通用户 `403 FORBIDDEN` |
+| 参数 | `resourceType?`、`locationId?`、`page`、`size` |
+| 响应 | `PageResult<ApprovalQueueItem>`，排序 `priorityTier ASC, submissionSeq ASC` |
+| 过滤 | 排除 `applicantId = 当前用户` 的条目（**从源头就不给自审入口**，比事后拦更稳） |
+| 越权 | 只返回 `manages(locationId)` 范围内的 |
+
+### 4.7 `POST /reservations/{id}/decision` —— 单人审批（T4 / T5）
+
+| 项 | 内容 |
+|---|---|
+| 权限 | `RESOURCE_MANAGER`、`COUNSELOR_ADMIN`，且 `approverId ≠ applicantId` |
+| 幂等 | 必须带 `Idempotency-Key`（两名审核员连点，靠这个 + 条件更新双保险） |
+| 请求 | `{decision: "APPROVE" | "REJECT", reason}` |
+| 成功 | `200`，体：`{id, status, decidedAt}` |
+| 失败 | `403 SELF_APPROVAL_FORBIDDEN`（自审，预约**保持** `PENDING_APPROVAL`）、`409 INVALID_STATE`（已被他人处理）、`409 RESOURCE_CONFLICT`（通过时容量已被占满，**状态保持 `PENDING_APPROVAL`，不自动转候补**）、`400 VALIDATION_ERROR`（`REJECT` 未填 `reason`） |
+
+**并发写法**：用条件更新的影响行数判断，禁止先 `SELECT` 再 `UPDATE`：
+
+```sql
+UPDATE reservations SET status = 'CONFIRMED', ...
+ WHERE id = ? AND status = 'PENDING_APPROVAL';
+-- 影响 0 行 → 409 INVALID_STATE
+```
+
+### 4.8 `POST /reservations/{id}/pickup` —— 确认取件（H2）
+
+| 项 | 内容 |
+|---|---|
+| 权限 | 申请人本人 |
+| 请求 | `{unitIds: [12, 13]}`（会议室无此端点） |
+| 成功 | `200`，体：`{id, handoverStatus:"CHECKED_OUT", unitCodes:[...]}` |
+| 失败 | `409 INVALID_STATE`（非 `NOT_PICKED_UP`）、`409 RESOURCE_CONFLICT`（`unitId` 不属该物品或已被占）、`403 FORBIDDEN`（非本人） |
+
+**同事务双写**：`reservations.handover_status = 'CHECKED_OUT'` 且 `item_units.status = 'CHECKED_OUT'`（写入方约定见 7.2）。
+
+### 4.9 `POST /reservations/{id}/return-submission` —— 提交归还（H3 / H6）
+
+| 项 | 内容 |
+|---|---|
+| 权限 | 申请人本人 |
+| 请求 | `multipart/form-data`：`photos`（≥1 张，jpg/png/webp）、`remark?` |
+| 成功 | `200`，体：`{id, handoverStatus:"RETURN_SUBMITTED", photoCount}` |
+| 失败 | `400 VALIDATION_ERROR`（无文件/类型不符）、`413`（超限）、`409 INVALID_STATE`（非 `CHECKED_OUT` 或 `RETURN_REJECTED`） |
+
+允许从 `RETURN_REJECTED` 重新提交（H6），此时旧照片保留、追加新照片。
+
+### 4.10 `POST /reservations/{id}/return-verification` —— 归还核验（H4 / H5）
+
+| 项 | 内容 |
+|---|---|
+| 权限 | `RESOURCE_MANAGER` 且 `manages(locationId)` |
+| 请求 | `{decision: "ACCEPT" | "REJECT", reason}` |
+| 成功 | `200`，体：`{id, handoverStatus:"COMPLETED"}` 或 `{id, handoverStatus:"RETURN_REJECTED"}` |
+| 失败 | `409 INVALID_STATE`（非 `RETURN_SUBMITTED`、缺照片、实物未进入待核验）、`400`（`REJECT` 未填原因） |
+
+**语义已由 catalog 固定**（`ReturnVerificationService`）：`ACCEPT` → `COMPLETED`，`REJECT` → `RETURN_REJECTED`；这两种值会通过 `ReservationReturnGateway.finish()` 传给我方。见 7 节。
+
+### 4.11 `POST /reservations/{id}/override` —— 辅导员强制占用（T11）
+
+| 项 | 内容 |
+|---|---|
+| 权限 | `COUNSELOR_ADMIN` |
+| 请求 | `{action: "CANCEL", reason, replacementSlot?}` |
+| 成功 | `200`，体：`{id, newReservationId, overriddenReservationId}` |
+| 失败 | `403 OVERRIDE_NOT_ALLOWED`（角色不符或非会议室）、`409 INVALID_STATE`（目标非 `CONFIRMED`）、`400`（`reason` 为空） |
+
+**必须同事务完成**：新建辅导员那条 `CONFIRMED` → 原预约置 `OVERRIDDEN`（**不占名额**）→ 写审计 → 写通知（通知受影响用户）。`replacementSlot` P1 不收，传了就 `400`。
+
+### 4.12 会议室四个端点
+
+| 端点 | 关键点 |
+|---|---|
+| `GET /rooms` | 支持 `locationId?`、`status?`、`page/size`；普通用户只看 `ACTIVE` |
+| `GET /rooms/{roomId}` | 返回 `openFrom`/`openTo` |
+| `POST /rooms` / `PATCH /rooms/{roomId}` | `RESOURCE_MANAGER` 且 `manages(locationId)`；`capacity` 固定 1，**不接受传入**；初始只有两间，新增须写明原因（写审计） |
+| `GET /rooms/{roomId}/calendar?from&to` | 见下 |
+
+**日历脱敏（验收条件 #16）**：只返回时段与状态，**不返回申请人姓名、事由、预约 id**：
+
+```json
+{ "roomId": 3, "from": "2026-11-03", "to": "2026-11-09",
+  "days": [ { "date": "2026-11-03",
+              "slots": [ { "startAt": "2026-11-03T01:00:00Z", "endAt": "2026-11-03T02:00:00Z", "state": "OCCUPIED" } ] } ] }
+```
+
+`from`/`to` 跨度上限 31 天，超出 `400 VALIDATION_ERROR`。
+
+## 5. 错误码总表
+
+| HTTP | code | 触发场景 | 前端应对 |
+|---|---|---|---|
+| 400 | `VALIDATION_ERROR` | 字段非法/缺失/未知字段/分页参数错 | 按 `details` 的字段名高亮 |
+| 401 | `UNAUTHENTICATED` | 未登录或 token 失效 | 跳登录 |
+| 403 | `FORBIDDEN` | 角色不足、超出地点范围 | 提示无权 |
+| 403 | `SELF_APPROVAL_FORBIDDEN` | 审批自己的申请 | 提示"不能审批自己的申请" |
+| 403 | `OVERRIDE_NOT_ALLOWED` | 非辅导员或非会议室 | 隐藏入口 |
+| 404 | `NOT_FOUND` | 不存在**或越权不可见** | 提示刷新 |
+| 409 | `INVALID_STATE` | 当前状态不允许此动作/已被他人处理 | **刷新详情**，不要重试 |
+| 409 | `RESOURCE_CONFLICT` | 时段被占、容量不足、实物被占 | 提示换时段或进候补，可用 `details.conflicts` 高亮 |
+| 409 | `IDEMPOTENCY_CONFLICT` | 同一 key 用于不同内容 | 前端 bug，换 key |
+| 413 | `VALIDATION_ERROR` | 上传超限 | 压缩重传 |
+| 503 | `DATABASE_UNAVAILABLE` | 数据库不可用 | 稍后重试 |
+| 503 | `DEPENDENCY_UNAVAILABLE` | 依赖模块未接入 | 提示功能未就绪 |
+
+**`INVALID_STATE` 与 `RESOURCE_CONFLICT` 不能混用**：前者是"这个状态下不能干这事"（刷新即可），后者是"资源被别人抢了"（要换时间）。前端给出完全不同的提示，混用会让用户以为系统坏了。
+
+## 6. 接口 → 状态迁移对照
+
+这是评审时最容易被问的一张表：**每个写接口必须对应状态图里已定义的迁移**，没有例外。
+
+| 接口 | 迁移 | 允许的起始状态 | 落库结果 |
+|---|---|---|---|
+| `POST /reservations` | T1 / T2 / T3 | — | `CONFIRMED`(+H1) / `PENDING_APPROVAL` / `WAITLISTED` |
+| `POST /{id}/cancel` | T7 / T9 / T10 | `PENDING_APPROVAL` / `WAITLISTED` / `CONFIRMED`(未取件) | `CANCELLED` |
+| `POST /{id}/decision` `APPROVE` | T4 | `PENDING_APPROVAL` | `CONFIRMED`(+H1) |
+| `POST /{id}/decision` `REJECT` | T5 | `PENDING_APPROVAL` | `REJECTED` |
+| `POST /{id}/pickup` | H2 | `NOT_PICKED_UP` | `CHECKED_OUT` |
+| `POST /{id}/return-submission` | H3 / H6 | `CHECKED_OUT` / `RETURN_REJECTED` | `RETURN_SUBMITTED` |
+| `POST /{id}/return-verification` `ACCEPT` | H4 | `RETURN_SUBMITTED` | `COMPLETED`（释放名额） |
+| `POST /{id}/return-verification` `REJECT` | H5 | `RETURN_SUBMITTED` | `RETURN_REJECTED` |
+| `POST /{id}/override` | T11 | `CONFIRMED`（会议室） | 原预约 `OVERRIDDEN` + 新预约 `CONFIRMED` |
+| 定时任务 / 查询时判定 | T6 / T8 / T12 / H7 | 见状态图 | `EXPIRED` / 候补转正 / 会议室 `COMPLETED` |
+
+`T6`、`T8`、`T12`、`H7` **没有对应的 HTTP 端点**，这是有意的：它们由定时任务或查询时惰性判定触发，暴露成接口会被前端误用。`T8`（候补转正）在 `cancel` 的**同一事务内**完成，不单独开接口。
+
+## 7. 与 catalog 模块（PR #5）的两处硬对接
+
+### 7.1 路由已被占用，必须裁决
+
+catalog 的 `ReturnVerificationController` 现在声明了：
+
+```java
+@GetMapping(value = "/api/v1/reservations", params = "status=RETURN_SUBMITTED")
+public List<ReturnRecord> queue(...)
+
+@PostMapping("/api/v1/reservations/{reservationId}/return-verification")
+public Map<String,Object> verify(...)
+```
+
+这会和本设计的端点 11 与 17 撞在同一批 path 上。Spring 不会启动失败（`params` 更具体者优先），但**语义上是分裂的**：`GET /reservations?status=RETURN_SUBMITTED` 走 catalog，`GET /reservations?status=CONFIRMED` 走我，同一端点两个实现方。
+
+**建议裁决（需 3 号确认）**：
+
+1. `GET /reservations?status=RETURN_SUBMITTED` **归预约模块**（它本来就在我的路径空间里），catalog 删除该映射方法，改用 `ReservationReturnGateway.queue()` 取同一份数据；
+2. `POST /{id}/return-verification` **归 catalog 保留**（它已实现完整校验：照片、unit 状态、地点授权），但 `finish()` 由我实现，两边**同一事务**；
+3. 或者更彻底：两个方法都删，我实现 API 层、内部调用 `ReturnVerificationService`。**这条最干净但改动最大，不建议在 PR #5 未合并时提。**
+
+P1 先按第 1、2 条执行：我只写 `GET /reservations` 的通用筛选，遇到 `status=RETURN_SUBMITTED` 时由 catalog 处理，不重复实现。
+
+### 7.2 `ReservationReturnGateway` 的三条语义（我实现，必须写清）
+
+```java
+ReturnRecord lock(long reservationId);                                    // 锁定并返回快照
+List<ReturnRecord> queue(Actor actor, int page, int size);                 // 归还核验队列
+void finish(long reservationId, String status, String actor, String reason); // 落核验结果
+```
+
+| 方法 | 我的实现要求 |
+|---|---|
+| `lock` | 校验存在、校验 `item/unit` 绑定未被改动（`handover_status` 与 `unit_ids` 一致）、返回 `status = handover_status`。**注意**：`ReturnRecord.status()` 必须是**交接状态**，因为 catalog 用它判 `"RETURN_SUBMITTED".equals(r.status())`；而 `reservations.status` 此时是 `CONFIRMED` |
+| `queue` | 只返回 `handover_status='RETURN_SUBMITTED'` 且 `manages(locationId)` 的条目，按 `submitted_at ASC` 排序 |
+| `finish` | `status` 参数写入 `handover_status`（`COMPLETED` / `RETURN_REJECTED`）；`COMPLETED` 时释放名额（`status` 保持 `CONFIRMED`）；写 `approval_records` 之外的核验记录 + 审计；**必须在调用方事务内执行**（catalog 已标 `@Transactional`） |
+
+**`item_units.status` 的唯一写入方**：建议由**预约模块**在 `pickup` / `return-submission` / `finish` 三处同步写，catalog 只读。否则取件时两边各写一处，盘点必然对不上。此条写进与 3 号的接口约定（状态图第 9 节 D-2 一并确认）。
+
+## 8. OpenAPI 片段（可直接并入 `contracts/openapi/openapi.yaml`）
+
+以下只含**我负责且当前未定义**的部分。`ApiError`、`ValidationError` 等已有 schema 复用，不重复定义。
+
+```yaml
+  # ---------- 会议室 ----------
+  /rooms:
+    get:
+      summary: 会议室列表
+      operationId: listRooms
+      parameters:
+        - { name: locationId, in: query, schema: { type: integer, format: int64 } }
+        - { name: status, in: query, schema: { type: string, enum: [ACTIVE, INACTIVE] } }
+        - { name: page, in: query, schema: { type: integer, default: 0 } }
+        - { name: size, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200':
+          description: 会议室列表；带分页参数时返回 PageResult
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: { $ref: '#/components/schemas/Room' }
+                  - $ref: '#/components/schemas/RoomPage'
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /rooms/{roomId}:
+    parameters:
+      - { name: roomId, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      summary: 会议室详情
+      operationId: getRoom
+      responses:
+        '200':
+          description: 会议室
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Room' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: 调整会议室
+      operationId: patchRoom
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 200 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoomInput' }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Room' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+  /rooms/{roomId}/calendar:
+    parameters:
+      - { name: roomId, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      summary: 占用日历（脱敏，不含申请人姓名与事由）
+      operationId: getRoomCalendar
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: 日历；跨度上限 31 天
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoomCalendar' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  # ---------- 预约 ----------
+  /reservations:
+    post:
+      summary: 创建预约
+      operationId: createReservation
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 200 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReservationInput' }
+      responses:
+        '201':
+          description: 已创建
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReservationCreated' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: 时段冲突、容量不足或状态不符
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+    get:
+      summary: 管理端筛选预约（须按管理范围授权）
+      operationId: listReservations
+      parameters:
+        - { name: resourceType, in: query, schema: { type: string, enum: [ROOM, ITEM] } }
+        - { name: resourceId, in: query, schema: { type: integer, format: int64 } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/ReservationStatus' } }
+        - { name: handoverStatus, in: query, schema: { $ref: '#/components/schemas/HandoverStatus' } }
+        - { name: applicantId, in: query, schema: { type: string } }
+        - { name: locationId, in: query, schema: { type: integer, format: int64 } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: page, in: query, schema: { type: integer, default: 0 } }
+        - { name: size, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200':
+          description: 预约列表
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: { $ref: '#/components/schemas/Reservation' }
+                  - $ref: '#/components/schemas/ReservationPage'
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /reservations/{reservationId}:
+    parameters:
+      - { name: reservationId, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      summary: 预约详情
+      operationId: getReservation
+      responses:
+        '200':
+          description: 详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReservationDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /me/reservations:
+    get:
+      summary: 我的预约
+      operationId: listMyReservations
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/ReservationStatus' } }
+        - { name: handoverStatus, in: query, schema: { $ref: '#/components/schemas/HandoverStatus' } }
+        - { name: page, in: query, schema: { type: integer, default: 0 } }
+        - { name: size, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200':
+          description: 我的预约
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: { $ref: '#/components/schemas/Reservation' }
+                  - $ref: '#/components/schemas/ReservationPage'
+  /reservations/{reservationId}/cancel:
+    parameters:
+      - { name: reservationId, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      summary: 取消预约（同事务转正最早候补）
+      operationId: cancelReservation
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 200 } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: 已取消
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                properties:
+                  id: { type: integer, format: int64 }
+                  status: { type: string, enum: [CANCELLED] }
+                  waitlistPromoted: { type: integer, format: int64, nullable: true }
+        '409': { $ref: '#/components/responses/InvalidState' }
+  /reservations/{reservationId}/decision:
+    parameters:
+      - { name: reservationId, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      summary: 单人审批（禁止自审）
+      operationId: decideReservation
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 200 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [APPROVE, REJECT] }
+                reason: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: 已审批
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                properties:
+                  id: { type: integer, format: int64 }
+                  status: { $ref: '#/components/schemas/ReservationStatus' }
+                  decidedAt: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+  /reservations/{reservationId}/pickup:
+    parameters:
+      - { name: reservationId, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      summary: 用户确认取件
+      operationId: pickupReservation
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 200 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [unitIds]
+              properties:
+                unitIds:
+                  type: array
+                  minItems: 1
+                  items: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: 已取件
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, handoverStatus]
+                properties:
+                  id: { type: integer, format: int64 }
+                  handoverStatus: { $ref: '#/components/schemas/HandoverStatus' }
+                  unitCodes: { type: array, items: { type: string } }
+        '409': { $ref: '#/components/responses/InvalidState' }
+  /reservations/{reservationId}/return-submission:
+    parameters:
+      - { name: reservationId, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      summary: 提交归还（至少 1 张照片）
+      operationId: submitReturn
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 200 } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photos]
+              properties:
+                photos:
+                  type: array
+                  minItems: 1
+                  items: { type: string, format: binary }
+                remark: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: 已提交，等待核验
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, handoverStatus]
+                properties:
+                  id: { type: integer, format: int64 }
+                  handoverStatus: { $ref: '#/components/schemas/HandoverStatus' }
+                  photoCount: { type: integer }
+        '413': { description: 文件超限 }
+        '409': { $ref: '#/components/responses/InvalidState' }
+  /reservations/{reservationId}/override:
+    parameters:
+      - { name: reservationId, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      summary: 辅导员强制占用已确认的会议室（须通知受影响用户并审计）
+      operationId: overrideReservation
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 200 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, reason]
+              properties:
+                action: { type: string, enum: [CANCEL] }
+                reason: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: 已强制占用
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  newReservationId: { type: integer, format: int64 }
+                  overriddenReservationId: { type: integer, format: int64 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+  /approval-queue:
+    get:
+      summary: 审核工作台（按 priorityTier、submissionSeq 升序）
+      operationId: listApprovalQueue
+      parameters:
+        - { name: resourceType, in: query, schema: { type: string, enum: [ROOM, ITEM] } }
+        - { name: locationId, in: query, schema: { type: integer, format: int64 } }
+        - { name: page, in: query, schema: { type: integer, default: 0 } }
+        - { name: size, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200':
+          description: 待审队列
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content, page, size, totalElements]
+                properties:
+                  content:
+                    type: array
+                    items: { $ref: '#/components/schemas/ApprovalQueueItem' }
+                  page: { type: integer }
+                  size: { type: integer }
+                  totalElements: { type: integer, format: int64 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+```
+
+新增 schema：
+
+```yaml
+    ReservationStatus:
+      type: string
+      enum: [PENDING_APPROVAL, WAITLISTED, CONFIRMED, REJECTED, CANCELLED, EXPIRED, OVERRIDDEN]
+      description: 主状态，只被审批/取消/超时/强制占用改变
+    HandoverStatus:
+      type: string
+      nullable: true
+      enum: [NOT_PICKED_UP, CHECKED_OUT, RETURN_SUBMITTED, RETURN_REJECTED, COMPLETED]
+      description: 交接状态，只被取件/提交归还/核验改变；会议室只出现 null 或 COMPLETED
+    ReservationInput:
+      type: object
+      required: [resourceType, resourceId, startAt, endAt, purpose]
+      additionalProperties: false
+      properties:
+        resourceType: { type: string, enum: [ROOM, ITEM] }
+        resourceId: { type: integer, format: int64 }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        purpose: { type: string, maxLength: 200 }
+        quantity: { type: integer, minimum: 1, default: 1 }
+        acceptWaitlist: { type: boolean, default: false }
+    Reservation:
+      type: object
+      required: [id, resourceType, startAt, endAt, status, applicantId, submissionSeq, priorityTier, overdue]
+      properties:
+        id: { type: integer, format: int64 }
+        resourceType: { type: string, enum: [ROOM, ITEM] }
+        roomId: { type: integer, format: int64, nullable: true }
+        itemId: { type: integer, format: int64, nullable: true }
+        quantity: { type: integer }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/ReservationStatus' }
+        handoverStatus: { $ref: '#/components/schemas/HandoverStatus' }
+        applicantId: { type: string }
+        applicantName: { type: string }
+        purpose: { type: string }
+        priorityTier: { type: integer, description: '0=COUNSELOR_ADMIN，1=其他；提交时冻结' }
+        submissionSeq: { type: integer, format: int64 }
+        overdue: { type: boolean, description: '派生值：now>endAt 且未 COMPLETED，不落库' }
+        createdAt: { type: string, format: date-time }
+    ReservationDetail:
+      allOf:
+        - $ref: '#/components/schemas/Reservation'
+        - type: object
+          properties:
+            approval:
+              type: object
+              nullable: true
+              properties:
+                approverId: { type: string }
+                approverName: { type: string }
+                decision: { type: string, enum: [APPROVE, REJECT] }
+                reason: { type: string }
+                decidedAt: { type: string, format: date-time }
+            handover:
+              type: object
+              nullable: true
+              properties:
+                unitIds: { type: array, items: { type: integer, format: int64 } }
+                unitCode: { type: string }
+                pickedUpAt: { type: string, format: date-time }
+                returnedAt: { type: string, format: date-time }
+            photos:
+              type: array
+              items: { $ref: '#/components/schemas/ReturnPhoto' }
+    ReservationCreated:
+      type: object
+      required: [id, status, submissionSeq, priorityTier]
+      properties:
+        id: { type: integer, format: int64 }
+        status: { $ref: '#/components/schemas/ReservationStatus' }
+        handoverStatus: { $ref: '#/components/schemas/HandoverStatus' }
+        submissionSeq: { type: integer, format: int64 }
+        priorityTier: { type: integer }
+    ReservationPage:
+      type: object
+      required: [content, page, size, totalElements]
+      properties:
+        content: { type: array, items: { $ref: '#/components/schemas/Reservation' } }
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
+    Room:
+      type: object
+      required: [id, locationId, name, capacity, status]
+      properties:
+        id: { type: integer, format: int64 }
+        locationId: { type: integer, format: int64 }
+        name: { type: string }
+        capacity: { type: integer, description: 恒为 1 }
+        openFrom: { type: string, description: 'HH:mm' }
+        openTo: { type: string, description: 'HH:mm' }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        note: { type: string }
+    RoomInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 100 }
+        openFrom: { type: string }
+        openTo: { type: string }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        note: { type: string, maxLength: 500 }
+    RoomPage:
+      type: object
+      required: [content, page, size, totalElements]
+      properties:
+        content: { type: array, items: { $ref: '#/components/schemas/Room' } }
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
+    RoomCalendar:
+      type: object
+      required: [roomId, days]
+      properties:
+        roomId: { type: integer, format: int64 }
+        days:
+          type: array
+          items:
+            type: object
+            required: [date, slots]
+            properties:
+              date: { type: string, format: date }
+              slots:
+                type: array
+                items:
+                  type: object
+                  required: [startAt, endAt, state]
+                  properties:
+                    startAt: { type: string, format: date-time }
+                    endAt: { type: string, format: date-time }
+                    state: { type: string, enum: [FREE, OCCUPIED, BLACKOUT] }
+    ApprovalQueueItem:
+      type: object
+      required: [id, resourceType, applicantId, applicantName, startAt, endAt, priorityTier, submissionSeq]
+      properties:
+        id: { type: integer, format: int64 }
+        resourceType: { type: string, enum: [ROOM, ITEM] }
+        resourceName: { type: string }
+        applicantId: { type: string }
+        applicantName: { type: string }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        purpose: { type: string }
+        priorityTier: { type: integer }
+        submissionSeq: { type: integer, format: int64 }
+        waitingSince: { type: string, format: date-time }
+    ReturnPhoto:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer, format: int64 }
+        storageKey: { type: string }
+        uploadedAt: { type: string, format: date-time }
+```
+
+新增 response（补 PR #2 缺的两个）：
+
+```yaml
+    ResourceConflict:
+      description: 时段被占 / 容量不足 / 实物被占
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example:
+            code: RESOURCE_CONFLICT
+            message: 该时段已被占用
+            details:
+              conflicts:
+                - resourceType: ROOM
+                  resourceId: 3
+                  startAt: '2026-11-03T01:00:00Z'
+                  endAt: '2026-11-03T02:00:00Z'
+            requestId: 0f4b1c2e-1111-2222-3333-444455556666
+    SelfApprovalForbidden:
+      description: 申请人不能审批自己的预约
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example:
+            code: SELF_APPROVAL_FORBIDDEN
+            message: 不能审批自己提交的申请
+            details: {}
+            requestId: 0f4b1c2e-1111-2222-3333-444455556666
+```
+
+## 9. 待确认事项
+
+| 编号 | 争点 | 本文取的做法 | 找谁 |
+|---|---|---|---|
+| A-1 | 认证接缝谁提供 | 1 号提供 `CurrentUserPort`，catalog 的 `CatalogAccess` 一并适配 | 1 号 |
+| A-2 | `GET /reservations?status=RETURN_SUBMITTED` 归属 | 归预约模块，catalog 删映射（见 7.1） | 3 号 |
+| A-3 | `item_units.status` 唯一写入方 | 预约模块写、catalog 只读（见 7.2） | 3 号 |
+| A-4 | 归还照片存哪 | booking 新建 `return_photos`，不复用 `item_images` | 3 号、6 号 |
+| A-5 | `override` P1 是否只做 `CANCEL` | 是，`RESCHEDULE` 留 P2 | 1 号、6 号 |
+| A-6 | 会议室 `POST /rooms` 是否 P1 | 是（前端 6 号需要），但只做新增与停用，不做删除 | 6 号 |
+| A-7 | 审批超时时长（T6） | 读 `settings/booking`，默认 24h | 1 号 |
+
+A-2、A-3 必须在写 `V5` 迁移前定，因为它们直接决定 `item_units` 的写入点和 `return_photos` 是否独立成表。
+
+## 10. 验收方式
+
+本期交付的"接口设计"以三件事为证据，缺一不可：
+
+1. **本文第 8 节的 OpenAPI 片段并入 `contracts/openapi/openapi.yaml`**，`/reservations` 段落不再返回 `ReturnSubmission[]`；
+2. **PR #2 上留有契约评审记录**，明确 `status` / `handoverStatus` 拆分与两个新增错误码；
+3. **端点总表 17 条与状态图迁移 T1–T12 / H1–H7 一一可对上**（第 6 节那张表就是证据）。
+
+代码实现从 `V5__create_rooms_and_reservations.sql` 开始，先建 `rooms`、`reservations`、`approval_records`、`reservation_idempotency`、`return_photos`、`audit_logs`，再按 `room` → `booking` → `approval` 三个包依次落地。
