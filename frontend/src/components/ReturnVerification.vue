@@ -16,6 +16,19 @@ function formatTime(iso) {
   return new Date(iso).toLocaleString('zh-CN', { hour12: false })
 }
 
+// 契约里 ReturnPhoto.url 是可选项（受权限控制的图片地址），联调阶段由后端提供。
+// 后端未返回 url 或图片加载失败时退回占位图，避免出现破图。
+const brokenPhotos = ref(new Set())
+
+function showableUrl(photo) {
+  if (!photo.url || brokenPhotos.value.has(photo.id)) return ''
+  return photo.url
+}
+
+function markBroken(photoId) {
+  brokenPhotos.value = new Set(brokenPhotos.value).add(photoId)
+}
+
 function keyFor(id) {
   if (!idempotencyKeys.value[id]) idempotencyKeys.value[id] = crypto.randomUUID()
   return idempotencyKeys.value[id]
@@ -96,10 +109,22 @@ onMounted(loadQueue)
         <p v-if="submission.remark" class="verify-remark">备注：{{ submission.remark }}</p>
 
         <div class="verify-photos" aria-label="归还现场照片">
-          <div v-for="photo in submission.photos" :key="photo.id" class="photo-placeholder">
-            <span class="photo-icon" aria-hidden="true">▧</span>
-            {{ photo.fileName }}
-          </div>
+          <figure
+            v-for="photo in submission.photos"
+            :key="photo.id"
+            :class="['photo-placeholder', { 'photo-has-image': showableUrl(photo) }]"
+          >
+            <img
+              v-if="showableUrl(photo)"
+              :src="showableUrl(photo)"
+              :alt="`归还照片：${photo.fileName}`"
+              class="verify-photo"
+              loading="lazy"
+              @error="markBroken(photo.id)"
+            >
+            <span v-else class="photo-icon" aria-hidden="true">▧</span>
+            <figcaption class="photo-name">{{ photo.fileName }}</figcaption>
+          </figure>
         </div>
 
         <label class="verify-reason" :for="`reason-${submission.id}`">
