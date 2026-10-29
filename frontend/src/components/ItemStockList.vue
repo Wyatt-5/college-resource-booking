@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { FALLBACK_LOCATIONS, getItemUnits, getItems, getLocations, updateItemUnit } from '../lib/api'
+import { getItemUnits, getItems, getLocations, updateItemUnit, createItemUnit } from '../lib/api'
 
 const UNIT_STATUSES = [
   { value: 'AVAILABLE', label: '可借' },
@@ -10,6 +10,9 @@ const UNIT_STATUSES = [
 ]
 
 const items = ref([])
+const page = ref(0)
+const total = ref(0)
+const size = 20
 const loading = ref(false)
 const error = ref('')
 const locations = ref([])
@@ -19,6 +22,23 @@ const unitsByItem = ref({})
 const unitsLoading = ref(false)
 const unitError = ref('')
 const unitSavingId = ref(null)
+const newCodes = ref({})
+const addingUnit = ref(false)
+async function addUnit(item) {
+  const code = (newCodes.value[item.id] || '').trim()
+  if (!code || addingUnit.value) return
+  addingUnit.value = true
+  unitError.value = ''
+  try {
+    await createItemUnit(item.id, code)
+    newCodes.value[item.id] = ''
+    const data = await getItems({ page: page.value, size })
+    items.value = data.content
+    total.value = data.totalElements
+    unitsByItem.value[item.id] = await getItemUnits(item.id)
+  } catch (error) { unitError.value = error.message }
+  finally { addingUnit.value = false }
+}
 
 function locationName(locationId) {
   const match = locations.value.find((item) => item.id === Number(locationId))
@@ -33,7 +53,10 @@ async function loadItems() {
   loading.value = true
   error.value = ''
   try {
-    items.value = await getItems()
+    const data = await getItems({ page: page.value, size })
+    items.value = data.content
+    total.value = data.totalElements
+    expandedId.value = null
   } catch (cause) {
     items.value = []
     error.value = cause instanceof Error ? cause.message : '读取物品失败。'
@@ -67,12 +90,8 @@ async function changeUnitStatus(item, unit, event) {
   try {
     const saved = await updateItemUnit(item.id, unit.id, { status })
     unit.status = saved.status
-    // 更新库存摘要
-    const units = unitsByItem.value[item.id] ?? []
-    item.unitSummary = {
-      total: units.length,
-      available: units.filter((entry) => entry.status === 'AVAILABLE').length,
-    }
+    // Re-read the server summary instead of inventing a second stock calculation.
+    await loadItems()
   } catch (cause) {
     unitError.value = cause instanceof Error ? cause.message : '更新状态失败。'
     event.target.value = unit.status
@@ -85,7 +104,7 @@ onMounted(async () => {
   try {
     locations.value = await getLocations()
   } catch {
-    locations.value = FALLBACK_LOCATIONS
+    locations.value = []
   }
   loadItems()
 })
@@ -152,6 +171,10 @@ onMounted(async () => {
               <td colspan="6">
                 <p v-if="unitsLoading" class="card-hint">正在读取实物编号…</p>
                 <template v-else>
+                  <div class="unit-input-row">
+                    <input v-model="newCodes[item.id]" maxlength="40" :aria-label="`为 ${item.name} 添加编号`" placeholder="新增实物编号" @keyup.enter.prevent="addUnit(item)">
+                    <button type="button" class="refresh-button" :disabled="addingUnit || !newCodes[item.id]?.trim()" @click="addUnit(item)">添加编号</button>
+                  </div>
                   <p v-if="unitError" class="field-error">{{ unitError }}</p>
                   <ul v-if="unitsByItem[item.id]?.length" class="unit-list">
                     <li v-for="unit in unitsByItem[item.id]" :key="unit.id">
@@ -159,10 +182,11 @@ onMounted(async () => {
                       <select
                         class="unit-status-select"
                         :value="unit.status"
-                        :disabled="unitSavingId === unit.id"
+                        :disabled="unitSavingId === unit.id || ['CHECKED_OUT', 'RETURN_SUBMITTED'].includes(unit.status)"
                         :aria-label="`修改 ${unit.unitCode} 状态`"
                         @change="changeUnitStatus(item, unit, $event)"
                       >
+                        <option v-if="['CHECKED_OUT', 'RETURN_SUBMITTED'].includes(unit.status)" :value="unit.status">{{ unit.status === 'CHECKED_OUT' ? '已借出' : '待归还核验' }}</option>
                         <option v-for="option in UNIT_STATUSES" :key="option.value" :value="option.value">
                           {{ option.label }}
                         </option>
@@ -177,5 +201,10 @@ onMounted(async () => {
         </tbody>
       </table>
     </div>
+    <nav class="section-heading" aria-label="库存分页">
+      <button class="refresh-button" :disabled="loading || page === 0" @click="page--; loadItems()">上一页</button>
+      <span>共 {{ total }} 项 · 第 {{ page + 1 }} 页</span>
+      <button class="refresh-button" :disabled="loading || (page + 1) * size >= total" @click="page++; loadItems()">下一页</button>
+    </nav>
   </section>
 </template>

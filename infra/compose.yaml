@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: booking
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in the root .env file}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - booking-postgres-data:/var/lib/postgresql/data
     healthcheck:
