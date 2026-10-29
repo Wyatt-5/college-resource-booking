@@ -78,6 +78,12 @@
       <div class="account-card account-card-wide">
         <h2>管理员名单</h2>
         <p v-if="adminsLoading" class="state-card">读取中…</p>
+        <div v-else-if="adminsError" class="state-card" role="alert">
+          <strong>暂时无法读取管理员名单</strong>
+          <p>{{ adminsError }}</p>
+          <button type="button" class="retry-button" @click="loadAdmins">重试</button>
+        </div>
+        <p v-else-if="admins.length === 0" class="state-card">暂无管理员数据。</p>
         <table v-else class="admin-table">
           <thead>
             <tr><th>姓名</th><th>账号</th><th>角色</th><th>所属部门</th><th>最近登录</th></tr>
@@ -128,6 +134,7 @@ const profileForm = reactive({
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirm: '' })
 const admins = ref([])
 const adminsLoading = ref(true)
+const adminsError = ref('')
 
 const savingProfile = ref(false)
 const profileMessage = ref('')
@@ -185,11 +192,17 @@ async function savePassword() {
   }
 }
 
-onMounted(async () => {
+async function loadAdmins() {
+  adminsLoading.value = true
+  adminsError.value = ''
   try {
     admins.value = await getAdminList()
+  } catch (error) {
+    adminsError.value = error.message || '管理员名单读取失败。'
   } finally {
     adminsLoading.value = false
   }
-})
+}
+
+onMounted(loadAdmins)
 </script>
