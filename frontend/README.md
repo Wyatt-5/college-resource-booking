@@ -1,6 +1,18 @@
 # 前端运行与接口对接
 
-Vue 3 + Vite。沿用前端 PR #2（提交 `8d5fbd2`）的布局。地点、物品浏览、上架、照片和实物维护默认调用真实接口；管理操作需要账号模块建立可信身份。正式登录和真实预约尚未接入，不能把测试身份的验证当作全系统联调完成。
+Vue 3 + Vite，用户端与管理端共用同一站点。物品浏览使用真实目录接口；管理操作在开发演示开关开启时可使用模拟数据，尚需与账号和预约模块联调。
+
+已实现的页面：
+
+| 页面 | 组件 | 说明 |
+|---|---|---|
+| 物品浏览 | `ItemsBrowse.vue` | 按地点筛选、查看详情与照片 |
+| 管理端登录 | `AdminLogin.vue` | 账号密码登录入口 |
+| 物品上架 | `ItemCreateForm.vue` | 基本信息、展示照片、实物编号 |
+| 库存管理 | `ItemStockList.vue` | 库存与实物编号维护 |
+| 归还核验 | `ReturnVerification.vue` | 核验队列与处理入口 |
+| 账号设置 | `AccountSettings.vue` | 账号资料与管理员名单页面 |
+
 
 ## 环境与启动
 
@@ -33,12 +45,12 @@ npm run dev
 ## 目录约定
 
 ```text
-src/App.vue       用户端/管理端导航和开发演示入口
-src/components/ItemsBrowse.vue 真实物品浏览页面
-src/lib/publicCatalog.js      真实目录接口客户端
-src/lib/api.js    统一调用入口及尚待替换的管理演示
-src/styles.css    响应式基础样式
-vite.config.js    本地开发时 /api 的后端代理
+src/App.vue                 导航、登录态与页面切换
+src/components/             各功能页面
+src/lib/api.js              管理请求与演示数据
+src/lib/publicCatalog.js    真实物品浏览接口
+src/styles.css              响应式样式
+vite.config.js              本地 /api 后端代理
 ```
 
 接口契约以 `../contracts/openapi/openapi.yaml` 为准。修改请求或响应字段时，前后端负责人应在同一个任务中更新契约并联调。当前地点响应约定为 JSON 数组，元素包含 `id`、`name`、`type`、`status`。

@@ -13,5 +13,6 @@ frontend/dist/
 frontend/.vite/
 worker/target/
 *.class
+.workbuddy/
 .DS_Store
 Thumbs.db
