@@ -265,6 +265,72 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .location-card h3 { margin: 6px 0 9px; font-size: 17px; overflow-wrap: anywhere; }
 .location-card p { margin: 0; color: #776d94; font-size: 12px; }
 
+/* 存放地点总览沿用系统的紫白色与卡片风格。 */
+.location-overview-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border: 1px solid #e2dbf0;
+  border-radius: 18px;
+  padding: 30px 34px;
+  background: linear-gradient(120deg, #fff 25%, #f1ecfa);
+  box-shadow: 0 8px 28px #241b3d0a;
+}
+.location-overview-intro h1 { margin: 8px 0 10px; color: #2f2350; font-size: clamp(28px, 3vw, 38px); }
+.location-overview-intro p:last-child { margin: 0; color: #665b80; font-size: 14px; line-height: 1.7; }
+.location-overview-intro .primary-button { flex: 0 0 auto; }
+.location-overview-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin: 19px 0 34px;
+  border-bottom: 1px solid #e6e0f1;
+  padding: 0 2px 18px;
+  color: #756b90;
+  font-size: 13px;
+}
+.location-overview-summary strong { margin-right: 3px; color: #4a3679; font-size: 18px; font-variant-numeric: tabular-nums; }
+.location-overview-heading { margin-bottom: 18px; }
+.location-overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.location-overview-card {
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  min-width: 0;
+  min-height: 132px;
+  border: 1px solid #e2dbf0;
+  border-radius: 15px;
+  padding: 22px;
+  background: #fff;
+  color: #2f2350;
+  text-align: left;
+  box-shadow: 0 3px 14px #241b3d07;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.location-overview-card:hover:not(:disabled), .location-overview-card:focus-visible {
+  border-color: #a894d0;
+  box-shadow: 0 9px 24px #4a36791a;
+  transform: translateY(-2px);
+}
+.location-overview-card:disabled { opacity: .55; cursor: not-allowed; }
+.location-overview-icon { display: grid; place-items: center; width: 50px; height: 50px; flex: 0 0 auto; border-radius: 12px; background: #eee9f8; color: #5b458e; font-size: 20px; font-weight: 800; }
+.location-overview-body { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 5px; }
+.location-overview-type { color: #897ca6; font-size: 12px; }
+.location-overview-body strong { font-size: 18px; overflow-wrap: anywhere; }
+.location-overview-count { color: #756b90; font-size: 12px; }
+.location-overview-arrow { color: #7c65af; font-size: 24px; line-height: 1; }
+.location-overview-note { margin: 17px 1px 0; color: #9489a9; font-size: 12px; line-height: 1.6; }
+@media (max-width: 700px) {
+  .location-overview-intro { align-items: flex-start; flex-direction: column; padding: 25px 22px; }
+  .location-overview-intro .primary-button { width: 100%; }
+  .location-overview-summary { margin-bottom: 27px; }
+  .location-overview-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .location-overview-card { transition: none; }
+}
+
 .state-card, .placeholder {
   border: 1px dashed #cfc7e4;
   border-radius: 14px;
@@ -466,8 +532,8 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .photo-add:hover { border-color: #5a4691; background: #ece7f8; }
 .photo-error { margin-top: 10px; }
 
-.unit-input-row { display: flex; gap: 10px; margin-bottom: 13px; }
-.unit-input-row input { flex: 1; }
+.unit-input-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 13px; }
+.unit-input-row input { flex: 1; min-width: 120px; }
 .unit-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .unit-list li {
   display: flex;
@@ -596,6 +662,21 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .items-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
 .item-card { border: 1px solid #e4dff0; border-radius: 15px; background: #fff; overflow: hidden; box-shadow: 0 3px 15px #241b3d07; }
 .item-photo { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; background: #ebe7f6; font-size: 40px; }
+.item-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.photo-grid img { width: 100%; max-height: 220px; object-fit: contain; }
+.reservation-panel { margin-top: 20px; padding-top: 18px; border-top: 1px solid #ede9f6; }
+.reservation-panel h3 { margin: 0 0 8px; }
+.reservation-list { display: grid; gap: 12px; }
+.reservation-entry { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding: 18px; }
+.reservation-entry h3 { margin: 0 0 8px; }
+.reservation-entry p { margin: 5px 0; }
+.account-provision-form { max-width: 520px; margin-top: 18px; }
+.room-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin-top: 20px; }
+.room-card { padding: 20px; }
+.room-card h2 { margin: 0 0 8px; }
+.room-week { display: grid; gap: 7px; margin: 16px 0; }
+.room-day { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #ede9f6; font-size: 12px; }
+.approval-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .photo-count { position: absolute; right: 10px; bottom: 10px; border-radius: 100px; padding: 3px 10px; background: #2f2350cc; color: #fff; font-size: 11px; }
 .item-body { padding: 15px 18px 16px; }
 .item-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -603,11 +684,12 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .item-location { margin: 6px 0 0; color: #948ab0; font-size: 12px; }
 .item-rules { margin: 8px 0 0; color: #5d5478; font-size: 12px; }
 .item-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; padding-top: 12px; border-top: 1px solid #ede9f6; }
+.card-book-button { padding: 9px 14px; white-space: nowrap; }
 .stock-text { color: #5a4691; font-size: 13px; font-weight: 700; }
 .stock-text.stock-out { color: #a03d2a; }
 
 .modal-mask { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: #2f235077; }
-.modal-box { width: 100%; max-width: 520px; border-radius: 16px; padding: 24px 28px; background: #fff; box-shadow: 0 18px 60px #2f235055; }
+.modal-box { width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; border-radius: 16px; padding: 24px 28px; background: #fff; box-shadow: 0 18px 60px #2f235055; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .modal-head h2 { margin: 0; font-size: 20px; }
 .badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
@@ -638,6 +720,11 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 }
 
 @media (max-width: 560px) {
+  .header-inner { align-items: flex-start; flex-wrap: wrap; gap: 10px; padding: 11px 14px 13px; }
+  .brand { width: 100%; }
+  .header-actions { width: 100%; justify-content: space-between; }
+  .mode-switch { margin-left: auto; }
+  .mode-tab { padding: 7px 15px; }
   .brand strong { font-size: 15px; }
   .brand small { font-size: 11px; }
   .brand-logo { height: 38px; padding: 4px 8px; }
@@ -659,4 +746,7 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
   .verify-card { padding: 18px; }
   .verify-actions { flex-direction: column; }
   .verify-actions .primary-button, .verify-actions .danger-button { width: 100%; }
+  .reservation-entry { flex-direction: column; }
+  .approval-actions { width: 100%; }
+  .approval-actions button { flex: 1; }
 }

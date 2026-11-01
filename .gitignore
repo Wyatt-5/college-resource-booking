@@ -6,6 +6,7 @@
 *.iml
 *.log
 backend/target/
+backend/data/
 backend/.m2/
 frontend/node_modules/
 frontend/dist/
