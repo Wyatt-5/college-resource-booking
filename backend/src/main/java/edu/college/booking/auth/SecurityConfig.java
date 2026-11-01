@@ -53,7 +53,8 @@ public class SecurityConfig {
         http.httpBasic(AbstractHttpConfigurer::disable);
         http.logout(AbstractHttpConfigurer::disable);
         http.authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.GET, "/api/v1/health", "/api/v1/locations", "/api/v1/items", "/api/v1/items/*", "/api/v1/items/*/images", "/api/v1/items/*/images/*", "/api/v1/auth/csrf")
+                .requestMatchers(HttpMethod.GET, "/api/v1/items/*/availability").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/v1/health", "/api/v1/locations", "/api/v1/items", "/api/v1/items/*", "/api/v1/items/*/images", "/api/v1/items/*/images/*", "/api/v1/spaces", "/api/v1/spaces/*/slots", "/api/v1/spaces/*/image", "/api/v1/auth/csrf")
                 .permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll()
                 .anyRequest().authenticated());

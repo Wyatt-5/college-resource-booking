@@ -5,7 +5,7 @@ info:
   description: |
     当前已实现账号登录与权限、物品目录、实物和展示照片接口。
     登录与写操作使用服务端会话；浏览器先 GET /auth/csrf，再提交令牌。
-    普通物品预约与我的预约已实现；贵重物品申请进入待审核，审批、取还件和会议室接口仍待接入。
+    普通物品预约、贵重物品和地点预约单人审核、我的预约已实现；取还件接口仍待接入。
     本契约须与实际代码同步，未实现的接口不得标为可用。
 servers:
 - url: http://localhost:8080/api/v1
@@ -464,6 +464,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+  /items/{itemId}/availability:
+    get:
+      summary: 公开查看物品单日逐小时库存（北京时间）
+      operationId: itemAvailability
+      parameters:
+      - $ref: '#/components/parameters/ItemId'
+      - name: date
+        in: query
+        required: true
+        schema: { type: string, format: date }
+      responses:
+        '200':
+          description: 返回24个小时的峰值占用、剩余库存及待审数量，不包含申请人信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date: { type: string, format: date }
+                  total: { type: integer, description: 当前可参与预约的实物数量 }
+                  slots:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        hour: { type: integer, minimum: 0, maximum: 23 }
+                        reserved: { type: integer }
+                        available: { type: integer }
+                        pending: { type: integer }
+        '404':
+          description: 物品不存在或已停用
   /items/{itemId}/images:
     post:
       summary: 上传物品展示照片（管理员）
@@ -689,6 +720,50 @@ paths:
       security:
       - {}
       - sessionCookie: []
+  /items/{itemId}/stock:
+    put:
+      summary: 设置物品库存总数（管理员，实物编号由服务端自动生成）
+      operationId: setItemStock
+      parameters:
+      - $ref: '#/components/parameters/ItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - quantity
+              additionalProperties: false
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 0
+                  maximum: 500
+      responses:
+        '200':
+          description: 更新后的物品及库存摘要
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 存在未结束预约，或需移除的实物不是可借状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      description: 增量生成不复用的编号；调低数量只移除最新的AVAILABLE实物。存在未结束的CONFIRMED预约或可移除实物不足时返回409，库存保持不变。
+      security:
+      - sessionCookie: []
   /items/{itemId}/units:
     get:
       summary: 查看物品的具体实物
@@ -743,7 +818,7 @@ paths:
       security:
       - sessionCookie: []
     post:
-      summary: 增加实物编号（管理员）
+      summary: 旧版手工实物编号接口（兼容保留；管理页面使用库存数量接口自动编号）
       operationId: createItemUnit
       parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -864,9 +939,173 @@ paths:
       description: 已借出和待核验时返回409 INVALID_STATE，不能用管理维护接口直接恢复可借。
       security:
       - sessionCookie: []
+  /spaces:
+    get:
+      summary: 可预约地点列表（公开）
+      operationId: listSpaces
+      responses:
+        '200':
+          description: 预置两间会议室，管理端可新增其他地点
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Space'
+    post:
+      summary: 管理员新增可预约地点
+      operationId: createSpace
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpaceInput'
+      responses:
+        '201':
+          description: 新增成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Space'
+        '403':
+          description: 无地点管理权限
+  /spaces/{spaceId}/slots:
+    get:
+      summary: 指定地点的单日整点占用表（公开）
+      operationId: spaceSlots
+      parameters:
+      - name: spaceId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: date
+        in: query
+        required: true
+        schema: { type: string, format: date }
+      responses:
+        '200':
+          description: 只返回小时和占用状态，不泄露申请人资料
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SpaceSlot'
+        '400':
+          description: 时间范围无效
+        '401':
+          description: 未登录
+        '404':
+          description: 地点不存在
+  /spaces/{spaceId}/image:
+    get:
+      summary: 公开读取地点照片
+      operationId: getSpaceImage
+      parameters:
+      - name: spaceId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: JPG 或 PNG 照片
+          content:
+            image/jpeg: {}
+            image/png: {}
+        '404':
+          description: 照片不存在
+    post:
+      summary: 管理员上传或更换地点照片
+      operationId: uploadSpaceImage
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: spaceId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: 上传成功，返回更新后的地点
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Space'
+  /review/reservations:
+    get:
+      summary: 审核员查看贵重物品和地点待审申请
+      operationId: pendingItemReviews
+      parameters:
+      - name: page
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+      - name: size
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 按服务端提交顺序返回待审申请；本人申请可见但不可自审
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemReservationPage'
+        '401':
+          description: 未登录
+        '403':
+          description: 没有审核权限
+      security:
+      - sessionCookie: []
+  /reservations/{reservationId}/review:
+    patch:
+      summary: 审核员单人同意或拒绝贵重物品申请
+      operationId: reviewItemReservation
+      parameters:
+      - name: reservationId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [APPROVE, REJECT] }
+                reason: { type: string, maxLength: 300 }
+      responses:
+        '200':
+          description: 审核结果及预约最新状态；同意时在事务中再次检查时段容量
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemReservation'
+        '400':
+          description: 决定或理由无效
+        '401':
+          description: 未登录
+        '403':
+          description: 无审核权限
+        '409':
+          description: 禁止自审、已处理、较早重叠申请待审或时段库存冲突
+      security:
+      - sessionCookie: []
   /me/reservations:
     get:
-      summary: 查看当前用户的物品预约
+      summary: 查看当前用户的物品与地点预约
       operationId: listMyReservations
       parameters:
       - name: page
@@ -888,11 +1127,54 @@ paths:
           description: 页码或页大小无效
       security:
       - sessionCookie: []
+  /me/reservations/{reservationId}:
+    delete:
+      summary: 申请人取消尚未开始的预约
+      operationId: cancelMyReservation
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: reservationId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: 返回状态为 CANCELLED 的预约
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemReservation'
+        '403':
+          description: 不是申请人
+        '409':
+          description: 已开始、已处理或已取消
+  /management/reservations:
+    get:
+      summary: 管理端查询物品与地点预约日志
+      operationId: managementReservationLog
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: itemId
+        in: query
+        schema: { type: integer, format: int64 }
+      - name: page
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+      - name: size
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 含申请人、资源、提交及使用时间、用途和状态的分页记录
+        '403':
+          description: 无管理权限
   /reservations:
     post:
-      summary: 提交物品预约
+      summary: 提交物品或地点预约
       operationId: createItemReservation
-      description: 普通物品在事务锁定物品后校验同一时段库存并确认；贵重物品进入待审核，审批时须再次校验容量。重复请求使用相同 Idempotency-Key 返回原预约。
+      description: 普通物品在事务锁定物品后校验同一时段库存并确认；贵重物品和地点进入待审核。地点只接受未来一周内同一天 08:00–22:00 的整点时段。重复请求使用相同 Idempotency-Key 返回原预约。
       parameters:
       - name: Idempotency-Key
         in: header
@@ -946,7 +1228,7 @@ paths:
           type: string
           enum:
           - ITEM
-          - ROOM
+          - SPACE
       - name: page
         in: query
         schema:
@@ -1075,20 +1357,54 @@ paths:
       - sessionCookie: []
 components:
   schemas:
+    Space:
+      type: object
+      required: [id, name, description, capacity, status]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        description: { type: string }
+        capacity: { type: integer, minimum: 1 }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        imageUrl: { type: string, nullable: true }
+    SpaceInput:
+      type: object
+      required: [name, capacity]
+      properties:
+        name: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+        capacity: { type: integer, minimum: 1, maximum: 1000 }
+    SpaceSlot:
+      type: object
+      required: [hour, status]
+      properties:
+        hour: { type: integer, minimum: 8, maximum: 21 }
+        status: { type: string, enum: [CONFIRMED, PENDING_APPROVAL] }
+    ApprovalQueueEntry:
+      type: object
+      required: [reservationId, resourceType, resourceId, startAt, endAt, purpose, submittedAt]
+      properties:
+        reservationId: { type: integer, format: int64 }
+        resourceType: { type: string, enum: [ITEM, SPACE] }
+        resourceId: { type: integer, format: int64 }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        purpose: { type: string }
+        submittedAt: { type: string, format: date-time }
     CreateItemReservation:
       type: object
       required: [resourceType, resourceId, startAt, endAt, purpose]
       properties:
         resourceType:
           type: string
-          enum: [ITEM]
+          enum: [ITEM, SPACE]
         resourceId:
           type: integer
           format: int64
         startAt:
           type: string
           format: date-time
-          description: 带时区的 ISO 8601 时间；时段采用 [startAt,endAt)
+          description: 带时区的 ISO 8601 整点时间；时段采用 [startAt,endAt)。物品可跨天，地点限同一天。
         endAt:
           type: string
           format: date-time
@@ -1288,6 +1604,12 @@ components:
           format: int64
           example: 2
           minimum: 1
+        initialStock:
+          type: integer
+          minimum: 0
+          maximum: 500
+          default: 0
+          description: 创建物品时一并生成的实物数量；编号由服务端自动分配
         description:
           type: string
           maxLength: 300
@@ -1525,6 +1847,11 @@ components:
     ItemPatch:
       type: object
       properties:
+        stockQuantity:
+          type: integer
+          minimum: 0
+          maximum: 500
+          description: 与物品属性在同一事务中保存；新增实物自动编号，减少库存须无占用预约且仅移除可用实物。
         name:
           type: string
           maxLength: 50

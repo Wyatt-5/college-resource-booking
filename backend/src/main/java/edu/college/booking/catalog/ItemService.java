@@ -47,10 +47,13 @@ public class ItemService {
     @Transactional
     public Item create(Map<String,Object> body,String key){
         CatalogAccess.Actor actor=access.current();
-        ItemInput input=ItemInput.parse(body,null);actor.require(input.locationId());
+        int initialStock=stockNumber(body.getOrDefault("initialStock",0),"initialStock");
+        Map<String,Object> itemBody=new HashMap<>(body);itemBody.remove("initialStock");
+        ItemInput input=ItemInput.parse(itemBody,null);actor.require(input.locationId());
         if(!repo.activeLocation(input.locationId()))throw CatalogException.invalid("locationId","地点不存在或已停用");
-        long id=operations.once(actor.id(),"CREATE_ITEM",key,input.fingerprint(),()->{
+        long id=operations.once(actor.id(),"CREATE_ITEM",key,input.fingerprint()+":stock="+initialStock,()->{
             long created=repo.insert(input);
+            for(int n=0;n<initialStock;n++)repo.addAutoUnit(created);
             operations.audit(actor.id(),"CREATE_ITEM",created,null,repo.find(created,false).orElseThrow());
             return created;
         });
@@ -60,13 +63,51 @@ public class ItemService {
     public Item patch(long id,Map<String,Object> body){
         CatalogAccess.Actor actor=access.current();
         Item before=managed(id,true);
-        ItemInput input=ItemInput.parse(body,before);actor.require(input.locationId());
+          Map<String,Object> details=new HashMap<>(body);
+          Object stock=details.remove("stockQuantity");
+          Integer target=body.containsKey("stockQuantity")?stockNumber(stock,"stockQuantity"):null;
+          ItemInput input=ItemInput.parse(details,before);actor.require(input.locationId());
         if(input.locationId()!=before.locationId()&&!repo.activeLocation(input.locationId()))
             throw CatalogException.invalid("locationId","地点不存在或已停用");
+        if(target!=null && target<before.unitSummary().total()){
+            int remove=Math.toIntExact(before.unitSummary().total())-target;
+            if(repo.removableUnitCount(id)<remove)
+                throw new CatalogException(HttpStatus.CONFLICT,"STOCK_IN_USE","已借出、维修或停用的实物不能通过库存数量删除；请先处理实物状态");
+            if(repo.hasActiveReservations(id))
+                throw new CatalogException(HttpStatus.CONFLICT,"STOCK_RESERVED","存在未结束的预约，请先处理预约再减少库存");
+        }
         repo.update(id,input);
-        Item after=required(id,false);operations.audit(actor.id(),"UPDATE_ITEM",id,before,after);return after;
+          if(target!=null) setStock(id,Map.of("quantity",target));
+          Item after=required(id,false);operations.audit(actor.id(),"UPDATE_ITEM",id,before,after);return after;
     }
     public List<ItemUnit> units(long id){managed(id,false);return repo.units(id);}
+    @Transactional
+    public Item setStock(long itemId,Map<String,Object> body){
+        if(body.size()!=1||!body.containsKey("quantity"))throw CatalogException.invalid("quantity","只接受库存数量");
+        int target=stockNumber(body.get("quantity"),"quantity");
+        CatalogAccess.Actor actor=access.current();
+        Item before=managed(itemId,true);
+        int current=Math.toIntExact(before.unitSummary().total());
+        if(target<current){
+            int remove=current-target;
+            if(repo.removableUnitCount(itemId)<remove)
+                throw new CatalogException(HttpStatus.CONFLICT,"STOCK_IN_USE","已借出、维修或停用的实物不能通过库存数量删除；请先处理实物状态");
+            if(repo.hasActiveReservations(itemId))
+                throw new CatalogException(HttpStatus.CONFLICT,"STOCK_RESERVED","存在未结束的预约，请先处理预约再减少库存");
+            repo.removeNewestAvailableUnits(itemId,remove);
+        }else for(int n=current;n<target;n++)repo.addAutoUnit(itemId);
+        Item after=required(itemId,false);
+        if(target!=current)operations.audit(actor.id(),"SET_STOCK",itemId,before,after);
+        return after;
+    }
+    private static int stockNumber(Object raw,String field){
+        if(!(raw instanceof Number number))throw CatalogException.invalid(field,"请输入0至500的整数");
+        try{
+            int count=new java.math.BigDecimal(number.toString()).intValueExact();
+            if(count<0||count>500)throw CatalogException.invalid(field,"请输入0至500的整数");
+            return count;
+        }catch(ArithmeticException|NumberFormatException e){throw CatalogException.invalid(field,"请输入0至500的整数");}
+    }
     @Transactional
     public ItemUnit addUnit(long item,Map<String,Object> body,String key){
         CatalogAccess.Actor actor=access.current();managed(item,true);

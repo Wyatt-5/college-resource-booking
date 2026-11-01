@@ -73,6 +73,21 @@ public class ItemRepository {
         long id=db.queryForObject("INSERT INTO item_units(item_id,unit_code) VALUES(:item,:code) RETURNING id",Map.of("item",item,"code",code),Long.class);
         return new ItemUnit(id,item,code,"AVAILABLE");
     }
+    public ItemUnit addAutoUnit(long item){
+        long id=db.queryForObject("SELECT nextval(pg_get_serial_sequence('item_units','id'))",Map.of(),Long.class);
+        String code="ITEM-"+item+"-"+id;
+        db.update("INSERT INTO item_units(id,item_id,unit_code) VALUES(:id,:item,:code)",Map.of("id",id,"item",item,"code",code));
+        return new ItemUnit(id,item,code,"AVAILABLE");
+    }
+    public int removableUnitCount(long item){
+        return db.queryForObject("SELECT count(*) FROM item_units WHERE item_id=:item AND status='AVAILABLE'",Map.of("item",item),Integer.class);
+    }
+    public boolean hasActiveReservations(long item){
+        return db.queryForObject("SELECT EXISTS(SELECT 1 FROM reservations WHERE item_id=:item AND status='CONFIRMED' AND end_at>CURRENT_TIMESTAMP)",Map.of("item",item),Boolean.class);
+    }
+    public void removeNewestAvailableUnits(long item,int count){
+        db.update("DELETE FROM item_units WHERE id IN (SELECT id FROM item_units WHERE item_id=:item AND status='AVAILABLE' ORDER BY id DESC LIMIT :count)",Map.of("item",item,"count",count));
+    }
     public ItemUnit updateUnit(ItemUnit unit,String state){
         db.update("UPDATE item_units SET status=:state WHERE id=:id",Map.of("state",state,"id",unit.id()));
         return new ItemUnit(unit.id(),unit.itemId(),unit.unitCode(),state);

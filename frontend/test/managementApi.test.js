@@ -1,6 +1,6 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { createItem, getItems, loginAdmin, uploadItemImage, deleteItemImage, MANAGEMENT_DEMO, logoutAdmin } from '../src/lib/api.js'
+import { createItem, getItems, loginAdmin, uploadItemImage, deleteItemImage, setItemStock, getPendingReviews, reviewReservation, MANAGEMENT_DEMO, logoutAdmin } from '../src/lib/api.js'
 const originalFetch = globalThis.fetch
 after(() => { globalThis.fetch = originalFetch })
 
@@ -36,6 +36,34 @@ test('managed list requests scoped pagination', async () => {
   globalThis.fetch = async (value) => { url = value; return Response.json({ content: [], totalElements: 0, page: 1, size: 20 }) }
   assert.equal((await getItems({ page: 1 })).page, 1)
   assert.equal(url, '/api/v1/items?scope=managed&page=1&size=20')
+})
+
+test('stock quantity uses the authenticated backend endpoint', async () => {
+  let request
+  globalThis.fetch = async (url, options) => { request = { url, options }; return Response.json({ id: 7, unitSummary: { total: 4, available: 4 } }) }
+  const result = await setItemStock(7, 4)
+  assert.equal(result.unitSummary.total, 4)
+  assert.equal(request.url, '/api/v1/items/7/stock')
+  assert.equal(request.options.method, 'PUT')
+  assert.deepEqual(JSON.parse(request.options.body), { quantity: 4 })
+  assert.equal(request.options.headers['X-CSRF-TOKEN'], 'test-csrf')
+  assert.equal(request.options.credentials, 'same-origin')
+})
+
+test('valuable item review reads the queue and sends a real decision', async () => {
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return url.includes('/review/reservations?')
+      ? Response.json({ content: [{ id: 31, status: 'PENDING_APPROVAL' }], totalElements: 1 })
+      : Response.json({ id: 31, status: 'CONFIRMED' })
+  }
+  assert.equal((await getPendingReviews({ page: 0 })).content[0].id, 31)
+  assert.equal(request.url, '/api/v1/review/reservations?page=0&size=20')
+  assert.equal((await reviewReservation(31, { decision: 'APPROVE' })).status, 'CONFIRMED')
+  assert.equal(request.url, '/api/v1/reservations/31/review')
+  assert.equal(request.options.method, 'PATCH')
+  assert.equal(request.options.headers['X-CSRF-TOKEN'], 'test-csrf')
 })
 
 test('photo upload and deletion include identity; multipart field is file', async () => {

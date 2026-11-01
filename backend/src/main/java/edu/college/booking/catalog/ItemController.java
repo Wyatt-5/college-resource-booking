@@ -29,6 +29,8 @@ public class ItemController {
     public Item patch(@PathVariable long itemId,@RequestBody Map<String,Object> body){return service.patch(itemId,body);}
     @GetMapping("/api/v1/items/{itemId}/units")
     public List<ItemUnit> units(@PathVariable long itemId){return service.units(itemId);}
+    @PutMapping("/api/v1/items/{itemId}/stock")
+    public Item setStock(@PathVariable long itemId,@RequestBody Map<String,Object> body){return service.setStock(itemId,body);}
     @PostMapping("/api/v1/items/{itemId}/units")
     public ResponseEntity<ItemUnit> addUnit(@PathVariable long itemId,@RequestBody Map<String,Object> body,
                                           @RequestHeader(value="Idempotency-Key",required=false) String key){

@@ -111,6 +111,43 @@ class CatalogDatabaseTest {
         mvc.perform(get("/api/v1/items/"+item)).andExpect(jsonPath("$.unitSummary.available").value(0));
         mvc.perform(get("/api/v1/items/"+item+"/units")).andExpect(status().isUnauthorized());
     }
+    @Test void initialStockAutoNumbersAndStockCorrection()throws Exception{
+        Map<String,Object> payload=new HashMap<>();
+        payload.put("name","自动编号相机");payload.put("locationId",location);payload.put("initialStock",3);
+        String created=mvc.perform(post("/api/v1/items").with(admin()).header("Idempotency-Key","auto-stock-"+UUID.randomUUID())
+          .contentType("application/json").content(json.writeValueAsString(payload)))
+          .andExpect(status().isCreated()).andExpect(jsonPath("$.unitSummary.total").value(3))
+          .andExpect(jsonPath("$.unitSummary.available").value(3)).andReturn().getResponse().getContentAsString();
+        long item=json.readTree(created).get("id").asLong();
+        List<String> codes=db.queryForList("SELECT unit_code FROM item_units WHERE item_id=?",String.class,item);
+        assertEquals(3,new HashSet<>(codes).size());
+        assertTrue(codes.stream().allMatch(code->code.startsWith("ITEM-"+item+"-")));
+        mvc.perform(put("/api/v1/items/"+item+"/stock").with(admin()).contentType("application/json").content("{\"quantity\":1}"))
+          .andExpect(status().isOk()).andExpect(jsonPath("$.unitSummary.total").value(1));
+        mvc.perform(put("/api/v1/items/"+item+"/stock").with(admin()).contentType("application/json").content("{\"quantity\":4}"))
+          .andExpect(status().isOk()).andExpect(jsonPath("$.unitSummary.total").value(4));
+        assertEquals(4,new HashSet<>(db.queryForList("SELECT unit_code FROM item_units WHERE item_id=?",String.class,item)).size());
+        mvc.perform(put("/api/v1/items/"+item+"/stock").with(admin()).contentType("application/json").content("{\"quantity\":1.5}"))
+          .andExpect(status().isBadRequest());
+        db.update("UPDATE item_units SET status='CHECKED_OUT' WHERE id=(SELECT min(id) FROM item_units WHERE item_id=?)",item);
+        mvc.perform(put("/api/v1/items/"+item+"/stock").with(admin()).contentType("application/json").content("{\"quantity\":0}"))
+          .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("STOCK_IN_USE"));
+    }
+    @Test void itemSettingsAndStockSaveTogetherOrRollBack()throws Exception{
+        long item=create(location,"原名称");
+        String saved=json.writeValueAsString(Map.of("name","新名称","locationId",other,"isValuable",false,
+                "rules",Map.of("advanceDays",7,"maxBorrowDays",3),"stockQuantity",2));
+        mvc.perform(patch("/api/v1/items/"+item).with(admin()).contentType("application/json").content(saved))
+          .andExpect(status().isOk()).andExpect(jsonPath("$.name").value("新名称"))
+          .andExpect(jsonPath("$.locationId").value(other)).andExpect(jsonPath("$.unitSummary.total").value(2));
+        assertEquals(2,db.queryForObject("SELECT count(*) FROM item_units WHERE item_id=?",Long.class,item));
+        db.update("UPDATE item_units SET status='CHECKED_OUT' WHERE id=(SELECT min(id) FROM item_units WHERE item_id=?)",item);
+        mvc.perform(patch("/api/v1/items/"+item).with(admin()).contentType("application/json")
+          .content("{\"name\":\"不应保存\",\"stockQuantity\":0}"))
+          .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("STOCK_IN_USE"));
+        assertEquals("新名称",db.queryForObject("SELECT name FROM items WHERE id=?",String.class,item));
+        assertEquals(2,db.queryForObject("SELECT count(*) FROM item_units WHERE item_id=?",Long.class,item));
+    }
     @Test void filteringVisibilityAndPagination()throws Exception{
         long item=create(location,"测试%相机"),empty=create(location,"没有库存");
         db.update("INSERT INTO item_units(item_id,unit_code,status) VALUES (?,'A','AVAILABLE'),(?,'B','RETURN_SUBMITTED')",item,empty);

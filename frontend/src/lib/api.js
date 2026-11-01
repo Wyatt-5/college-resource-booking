@@ -209,6 +209,15 @@ async function patchJson(path, body) {
     body: JSON.stringify(body),
   }).then((response) => parseResponse(response, '更新失败'))
 }
+async function putJson(path, body) {
+  const csrf = await ensureCsrf()
+  return fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(), ...csrf },
+    credentials: 'same-origin',
+    body: JSON.stringify(body),
+  }).then((response) => parseResponse(response, '库存更新失败'))
+}
 
 function unitSummary(itemId) {
   const units = mockUnits.filter((unit) => unit.itemId === itemId)
@@ -237,6 +246,11 @@ export async function createItem(payload, { idempotencyKey } = {}) {
     mockItemId += 1
     const item = { id: mockItemId, ...payload, createdAt: new Date().toISOString() }
     mockItems.push(item)
+    for (let n = 0; n < (payload.initialStock || 0); n++) {
+      mockUnitId += 1
+      mockUnits.push({ id: mockUnitId, itemId: item.id, unitCode: `ITEM-${item.id}-${mockUnitId}`, status: 'AVAILABLE' })
+    }
+    item.unitSummary = unitSummary(item.id)
     return item
   }
   return postJson('/items', payload, idempotencyKey)
@@ -305,8 +319,35 @@ export const getPublicItems = (filters) => publicCatalog.list(filters)
 export const getPublicItem = (id) => publicCatalog.detail(id)
 export const getMyReservations = ({ page = 0, size = 20 } = {}) =>
   getJson(`/me/reservations?page=${page}&size=${size}`)
+export async function cancelMyReservation(id) {
+  const csrf = await ensureCsrf()
+  return fetch(`${API_BASE}/me/reservations/${id}`, { method:'DELETE',
+    headers: { Accept:'application/json', ...authHeaders(), ...csrf }, credentials:'same-origin' })
+    .then(response => parseResponse(response,'取消预约失败'))
+}
+export const getBookingLogs = ({ itemId, page = 0, size = 20 } = {}) =>
+  getJson(`/management/reservations?page=${page}&size=${size}${itemId ? `&itemId=${itemId}` : ''}`)
+export const updateItem = (id, payload) => patchJson(`/items/${id}`,payload)
 export const createReservation = (payload, idempotencyKey) =>
   postJson('/reservations', payload, idempotencyKey)
+export const getPendingReviews = ({ page = 0, size = 20 } = {}) =>
+  getJson(`/review/reservations?page=${page}&size=${size}`)
+export const reviewReservation = (reservationId, payload) =>
+  patchJson(`/reservations/${reservationId}/review`, payload)
+export const getSpaces = () => getJson('/spaces')
+export const getSpaceSlots = (spaceId, date) => getJson(`/spaces/${spaceId}/slots?date=${encodeURIComponent(date)}`)
+export const getItemAvailability = (itemId, date) => getJson(`/items/${itemId}/availability?date=${encodeURIComponent(date)}`)
+export const createSpace = (payload) => postJson('/spaces', payload)
+export async function uploadSpaceImage(spaceId, file) {
+  const body = new FormData()
+  body.append('file', file)
+  const csrf = await ensureCsrf()
+  const response = await fetch(`${API_BASE}/spaces/${spaceId}/image`, {
+    method: 'POST', headers: { Accept: 'application/json', ...authHeaders(), ...csrf },
+    credentials: 'same-origin', body,
+  })
+  return parseResponse(response, '地点照片上传失败')
+}
 export const getItemImages = (id) => getJson(`/items/${id}/images`)
 export async function readItemImage(itemId, imageId) {
   const response = await fetch(`${API_BASE}/items/${itemId}/images/${imageId}`, { headers: authHeaders() })
@@ -329,6 +370,24 @@ export async function getItemUnits(itemId) {
     return mockUnits.filter((unit) => unit.itemId === itemId).map((unit) => ({ ...unit }))
   }
   return getJson(`/items/${itemId}/units`)
+}
+export async function setItemStock(itemId, quantity) {
+  if (USE_MOCK_ITEMS) {
+    await mockDelay()
+    const item = mockItems.find((entry) => entry.id === itemId)
+    if (!item) throw apiFailure('NOT_FOUND', '物品不存在')
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 500) throw apiFailure('VALIDATION_ERROR', '请输入0至500的整数')
+    const current = mockUnits.filter((unit) => unit.itemId === itemId)
+    const removable = current.filter((unit) => unit.status === 'AVAILABLE').sort((a, b) => b.id - a.id)
+    if (quantity < current.length && removable.length < current.length - quantity) throw apiFailure('STOCK_IN_USE', '部分实物不可移除')
+    for (let n = current.length; n < quantity; n++) {
+      mockUnitId += 1
+      mockUnits.push({ id: mockUnitId, itemId, unitCode: `ITEM-${itemId}-${mockUnitId}`, status: 'AVAILABLE' })
+    }
+    for (const unit of removable.slice(0, Math.max(0, current.length - quantity))) mockUnits.splice(mockUnits.indexOf(unit), 1)
+    return { ...item, unitSummary: unitSummary(itemId) }
+  }
+  return putJson(`/items/${itemId}/stock`, { quantity })
 }
 
 export async function updateItemUnit(itemId, unitId, patch) {
@@ -420,6 +479,8 @@ export function getSessionAdmin() {
 
 export const getSessionUser = getSessionAdmin
 export const createUserAccount = (payload) => postJson('/users', payload)
+export const getUserAccounts = () => getJson('/users')
+export const setUserGrants = (userId, grants, reviewer) => putJson(`/users/${userId}/grants`, { grants, reviewer })
 
 export async function loginAdmin(account, password) {
   if (USE_MOCK_ITEMS) {

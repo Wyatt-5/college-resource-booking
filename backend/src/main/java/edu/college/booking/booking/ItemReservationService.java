@@ -27,24 +27,34 @@ public class ItemReservationService {
             String endAt, String purpose, Integer quantity) {}
     public record ReservationPage(java.util.List<ItemReservation> content, int page,
             int size, long totalElements) {}
+    public record LogPage(java.util.List<ItemReservationRepository.BookingLog> content,
+            int page, int size, long totalElements) {}
+    public record ReviewRequest(String decision,String reason) {}
+    public record ItemSlot(int hour, int reserved, int available, int pending) {}
+    public record Availability(java.time.LocalDate date, int total, java.util.List<ItemSlot> slots) {}
 
     private final AuthorizationService authorization;
     private final ItemService items;
     private final ItemRepository itemRepository;
     private final ItemReservationRepository reservations;
     private final AuditService audit;
+    private final SpaceService spaces;
 
     public ItemReservationService(AuthorizationService authorization, ItemService items,
-            ItemRepository itemRepository, ItemReservationRepository reservations, AuditService audit) {
+            ItemRepository itemRepository, ItemReservationRepository reservations, AuditService audit,
+            SpaceService spaces) {
         this.authorization = authorization;
         this.items = items;
         this.itemRepository = itemRepository;
         this.reservations = reservations;
         this.audit = audit;
+        this.spaces = spaces;
     }
 
     @Transactional
     public ItemReservation create(Authentication authentication, CreateRequest input, String key) {
+        if (input != null && "SPACE".equals(input.resourceType()))
+            return spaces.reserve(authentication, input, key);
         Account applicant = authorization.requireActive(authentication);
         if (key == null || !key.matches("[A-Za-z0-9._:-]{8,100}")) {
             throw invalid("Idempotency-Key 必须为 8–100 位字母、数字或 . _ : -");
@@ -74,6 +84,9 @@ public class ItemReservationService {
         if (replay != null) return replay;
 
         Instant now = Instant.now();
+        if (!start.equals(start.truncatedTo(java.time.temporal.ChronoUnit.HOURS))
+                || !end.equals(end.truncatedTo(java.time.temporal.ChronoUnit.HOURS)))
+            throw invalid("物品预约的开始和结束时间必须为整点，可以跨天预约");
         if (!start.isAfter(now)) throw invalid("预约开始时间必须晚于当前时间");
         if (item.rules().advanceDays() == null || item.rules().maxBorrowDays() == null) {
             throw new ApiProblem(HttpStatus.CONFLICT, "RULES_NOT_CONFIGURED", "请管理员先配置预约规则");
@@ -89,8 +102,7 @@ public class ItemReservationService {
             throw new ApiProblem(HttpStatus.CONFLICT, "RESOURCE_CONFLICT", "当前可借实物不足");
         }
         String status = item.isValuable() ? "PENDING_APPROVAL" : "CONFIRMED";
-        if ("CONFIRMED".equals(status)
-                && reservations.confirmedQuantity(item.id(), start, end) + quantity > available) {
+        if (reservations.confirmedQuantity(item.id(), start, end) + quantity > available) {
             throw new ApiProblem(HttpStatus.CONFLICT, "RESOURCE_CONFLICT", "该时段的物品已被预约");
         }
         ItemReservation created = reservations.create(applicant.id(), item.id(), start, end,
@@ -100,11 +112,83 @@ public class ItemReservationService {
     }
 
     @Transactional(readOnly = true)
+    public Availability availability(long itemId, java.time.LocalDate date) {
+        Item item = items.required(itemId, false);
+        if (!itemRepository.visible(item))
+            throw new ApiProblem(HttpStatus.NOT_FOUND, "NOT_FOUND", "物品不存在或已停用");
+        ZoneId zone = ZoneId.of("Asia/Shanghai");
+        Instant from = date.atStartOfDay(zone).toInstant();
+        var spans = reservations.occupancy(itemId, from, date.plusDays(1).atStartOfDay(zone).toInstant());
+        int total = reservations.availableUnits(itemId);
+        var slots = java.util.stream.IntStream.range(0, 24).mapToObj(hour -> {
+            Instant start = from.plus(Duration.ofHours(hour));
+            Instant end = start.plus(Duration.ofHours(1));
+            int reserved = ItemReservationRepository.peak(spans, start, end, "CONFIRMED");
+            return new ItemSlot(hour, reserved, Math.max(0, total - reserved),
+                    ItemReservationRepository.peak(spans, start, end, "PENDING_APPROVAL"));
+        }).toList();
+        return new Availability(date, total, slots);
+    }
+
+    @Transactional(readOnly = true)
     public ReservationPage mine(Authentication authentication, int page, int size) {
         Account applicant = authorization.requireActive(authentication);
         if (page < 0 || size < 1 || size > 100) throw invalid("页码或每页数量无效");
         return new ReservationPage(reservations.mine(applicant.id(), size, (long) page * size),
                 page, size, reservations.countMine(applicant.id()));
+    }
+    @Transactional(readOnly=true)
+    public LogPage log(Authentication authentication, Long itemId, int page, int size) {
+        authorization.requireSpaceManager(authentication);
+        if(page<0||size<1||size>100||itemId!=null&&itemId<=0)throw invalid("日志查询参数无效");
+        if(itemId!=null) items.required(itemId,false);
+        return new LogPage(reservations.log(itemId,size,(long)page*size),page,size,reservations.countLog(itemId));
+    }
+    @Transactional
+    public ItemReservation cancel(Authentication authentication,long id) {
+        Account actor=authorization.requireActive(authentication);
+        ItemReservation before=reservations.byId(id).orElseThrow(()->new ApiProblem(HttpStatus.NOT_FOUND,"NOT_FOUND","预约不存在"));
+        if(before.applicantId()!=actor.id()) throw new ApiProblem(HttpStatus.FORBIDDEN,"FORBIDDEN","只能取消自己的预约");
+        if("ITEM".equals(before.resourceType()))items.required(before.resourceId(),true);
+        else spaces.required(before.resourceId(),true);
+        ItemReservation after=reservations.cancel(id);
+        audit.record(actor.id(),"RESERVATION_CANCELLED","RESERVATION",id,before,after);
+        return after;
+    }
+    @Transactional(readOnly=true)
+    public ReservationPage pending(Authentication authentication,int page,int size) {
+        authorization.requireReviewer(authentication);
+        if(page<0||size<1||size>100)throw invalid("页码或每页数量无效");
+        return new ReservationPage(reservations.pending(size,(long)page*size),page,size,reservations.countPending());
+    }
+    @Transactional
+    public ItemReservation review(Authentication authentication,long reservationId,ReviewRequest request) {
+        if(reservationId<=0||request==null||!("APPROVE".equals(request.decision())||"REJECT".equals(request.decision())))
+            throw invalid("审核决定无效");
+        String reason=request.reason()==null?"":request.reason().trim();
+        if(reason.length()>300||("REJECT".equals(request.decision())&&reason.isEmpty()))
+            throw invalid("拒绝申请时须填写300字以内的原因");
+        ItemReservation initial=reservations.byId(reservationId)
+            .orElseThrow(()->new ApiProblem(HttpStatus.NOT_FOUND,"NOT_FOUND","预约不存在"));
+        if ("SPACE".equals(initial.resourceType())) return spaces.review(authentication, initial, request);
+        Account reviewer=authorization.requireReviewerOtherThanApplicant(authentication,initial.applicantId());
+        items.required(initial.resourceId(),true);
+        ItemReservation before=reservations.byId(reservationId).orElseThrow();
+        if(!"PENDING_APPROVAL".equals(before.status()))
+            throw new ApiProblem(HttpStatus.CONFLICT,"INVALID_STATE","申请已被处理");
+        if("APPROVE".equals(request.decision())) {
+            if(!before.startAt().isAfter(Instant.now()))
+                throw new ApiProblem(HttpStatus.CONFLICT,"RESERVATION_EXPIRED","预约开始时间已过，无法批准");
+            if(reservations.earlierPendingOverlaps(before))
+                throw new ApiProblem(HttpStatus.CONFLICT,"EARLIER_REQUEST_PENDING","同一时段有更早提交的申请，请先处理较早的申请");
+            int available=reservations.availableUnits(before.resourceId());
+            if(reservations.confirmedQuantity(before.resourceId(),before.startAt(),before.endAt())+before.quantity()>available)
+                throw new ApiProblem(HttpStatus.CONFLICT,"RESOURCE_CONFLICT","该时段库存不足，无法批准");
+        }
+        ItemReservation after=reservations.decide(reservationId,"APPROVE".equals(request.decision())?"CONFIRMED":"REJECTED");
+        audit.record(reviewer.id(),"RESERVATION_REVIEWED","RESERVATION",reservationId,before,
+                java.util.Map.of("reservation",after,"reason",reason));
+        return after;
     }
 
     private ItemReservation replay(long applicantId, String key, String hash) {

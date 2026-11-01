@@ -2,9 +2,10 @@
   <section class="content-section">
     <div class="section-heading">
       <div>
-        <p class="eyebrow">用户端 · 物品预约</p>
-        <h1>可借物品</h1>
-        <p class="section-sub">查看已上架物品。当前库存不代表某个预约时段的可用量，预约功能尚在对接。</p>
+        <p class="eyebrow">{{ workspace === 'admin' ? '管理端' : '用户端' }} · 物品预约</p>
+        <h1>{{ initialLocation ? `${initialLocation.name} · 物品` : '可借物品' }}</h1>
+        <p class="section-sub">选择物品并提交时段预约。当前库存仅供参考，提交时会再次检查该时段的可用量。</p>
+        <button v-if="initialLocation" class="link-button" type="button" @click="emit('back-to-locations')">← 返回资源总览</button>
       </div>
       <button class="refresh-button" :disabled="loading" @click="loadItems">{{ loading ? '刷新中…' : '刷新' }}</button>
     </div>
@@ -43,7 +44,9 @@
             <span :class="['stock-text', item.unitSummary.available > 0 ? '' : 'stock-out']">
               可借 {{ item.unitSummary.available }} / 共 {{ item.unitSummary.total }} 件
             </span>
-            <button class="link-button" @click="openDetail(item)">查看详情</button>
+            <button class="primary-button card-book-button" type="button" @click="openDetail(item)">
+              预约物品
+            </button>
           </div>
         </div>
       </article>
@@ -54,12 +57,7 @@
       <span role="status">共 {{ total }} 件 · 第 {{ page + 1 }} / {{ Math.max(1, Math.ceil(total / size)) }} 页</span>
       <button class="refresh-button" :disabled="loading || (page + 1) * size >= total" @click="changePage(page + 1)">下一页</button>
     </nav>
-    <div v-if="detail" class="modal-mask" @click.self="closeDetail()">
-      <div class="modal-box" role="dialog" aria-modal="true" :aria-label="detail.name">
-        <div class="modal-head">
-          <h2>{{ detail.name }}</h2>
-          <button class="link-button" @click="closeDetail()">关闭</button>
-        </div>
+    <BookingModal v-if="detail" :title="detail.name" @close="closeDetail">
         <p v-if="detailLoading" role="status">正在读取最新详情…</p>
         <p v-else-if="detailError" class="error-card" role="alert">{{ detailError }} <button class="link-button" @click="openDetail(detail)">重试</button></p>
         <template v-else>
@@ -81,17 +79,17 @@
         </dl>
         <ReservationForm :key="detail.id" :item="detail" :current-user="currentUser" @login-requested="emit('login-requested')" />
         </template>
-      </div>
-    </div>
+    </BookingModal>
   </section>
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getLocations, getPublicItems, getPublicItem } from '../lib/api'
 import ReservationForm from '../features/user/ReservationForm.vue'
-defineProps({ currentUser: { type: Object, default: null } })
-const emit = defineEmits(['login-requested'])
+import BookingModal from './BookingModal.vue'
+const props = defineProps({ currentUser: { type: Object, default: null }, initialLocation: { type: Object, default: null }, workspace: { type: String, default: 'user' } })
+const emit = defineEmits(['login-requested', 'back-to-locations'])
 const visibleItems = ref([])
 const locations = ref([])
 const loading = ref(false)
@@ -103,7 +101,7 @@ const detailLoading = ref(false)
 const page = ref(0)
 const size = 12
 const total = ref(0)
-const filters = reactive({ keyword: '', locationId: '', onlyAvailable: false })
+const filters = reactive({ keyword: '', locationId: props.initialLocation ? String(props.initialLocation.id) : '', onlyAvailable: false })
 let listVersion = 0
 let detailVersion = 0
 let searchTimer
@@ -140,6 +138,10 @@ function applyFilters(debounce = false) {
   if (debounce === true) searchTimer = setTimeout(loadItems, 300)
   else loadItems()
 }
+watch(() => props.initialLocation?.id, id => {
+  filters.locationId = id == null ? '' : String(id)
+  applyFilters()
+})
 function changePage(next) { page.value = next; loadItems() }
 function closeDetail() { ++detailVersion; detail.value = null; detailError.value = ''; detailLoading.value = false }
 async function openDetail(item) {

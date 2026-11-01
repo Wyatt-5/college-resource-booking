@@ -1,27 +1,34 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { getLocations, getSessionAdmin, logoutAdmin, refreshAdminSession, MANAGEMENT_DEMO } from './lib/api'
+import { getSessionAdmin, logoutAdmin, refreshAdminSession, MANAGEMENT_DEMO } from './lib/api'
 import AccountSettings from './components/AccountSettings.vue'
 import AdminLogin from './components/AdminLogin.vue'
-import ItemCreateForm from './components/ItemCreateForm.vue'
 import ItemStockList from './components/ItemStockList.vue'
 import ItemsBrowse from './components/ItemsBrowse.vue'
 import ReturnVerification from './components/ReturnVerification.vue'
 import UserLogin from './features/user/UserLogin.vue'
 import MyReservations from './features/user/MyReservations.vue'
 import UserProvision from './features/admin/UserProvision.vue'
+import RoomPrototype from './features/rooms/RoomPrototype.vue'
+import SpaceManagement from './features/rooms/SpaceManagement.vue'
+import ApprovalQueue from './features/approval/ApprovalQueue.vue'
+import LocationOverview from './features/dashboard/LocationOverview.vue'
+import BookingLog from './features/admin/BookingLog.vue'
 
 const sections = [
   { key: 'locations', label: '存放地点', group: 'user' },
   { key: 'items', label: '物品预约', group: 'user' },
-  { key: 'rooms', label: '会议室预约', group: 'user' },
+  { key: 'rooms', label: '地点预约', group: 'user' },
   { key: 'mine', label: '我的预约', group: 'user' },
   { key: 'login', label: '登录', group: 'user' },
-  { key: 'itemCreate', label: '物品上架', group: 'admin' },
   { key: 'itemStock', label: '库存管理', group: 'admin' },
+  { key: 'spaceManage', label: '地点管理', group: 'admin' },
   { key: 'returnCheck', label: '归还核验', group: 'admin' },
   { key: 'account', label: '账号管理', group: 'admin' },
-  { key: 'userProvision', label: '用户账号', group: 'admin' },
+  { key: 'userProvision', label: '账号与权限', group: 'admin' },
+  { key: 'bookAsUser', label: '预约物品', group: 'admin' },
+  { key: 'approval', label: '审核工作台', group: 'admin' },
+  { key: 'bookingLog', label: '预约日志', group: 'admin' },
 ]
 
 const groups = {
@@ -32,65 +39,45 @@ const groups = {
 const mode = ref('user')
 const enableManagementDemo = MANAGEMENT_DEMO
 const activeSection = ref('locations')
+const selectedLocation = ref(null)
 const adminUser = ref(getSessionAdmin())
 const hasManagementRole = computed(() => adminUser.value?.roles?.some((role) =>
+  ['SYSTEM_ADMIN', 'COUNSELOR_ADMIN', 'RESOURCE_MANAGER', 'REVIEWER'].includes(role)))
+const canManageItems = computed(() => adminUser.value?.roles?.some((role) =>
   ['SYSTEM_ADMIN', 'COUNSELOR_ADMIN', 'RESOURCE_MANAGER'].includes(role)))
 
 function switchMode(next) {
   mode.value = next
-  activeSection.value = sections.find((item) => item.group === next).key
+  selectedLocation.value = null
+  activeSection.value = next === 'admin' && !canManageItems.value ? 'approval' : sections.find((item) => item.group === next).key
+}
+
+function openLocation(location) {
+  selectedLocation.value = { id: location.id, name: location.name }
+  activeSection.value = 'items'
+}
+
+function openAllItems() {
+  selectedLocation.value = null
+  activeSection.value = 'items'
+}
+
+function selectSection(key) {
+  if (key === 'items') selectedLocation.value = null
+  activeSection.value = key
 }
 
 function onLoggedIn(user) {
   adminUser.value = user
-  activeSection.value = mode.value === 'user' ? 'items' : 'itemCreate'
+  activeSection.value = mode.value === 'user' ? 'items' : (canManageItems.value ? 'itemStock' : 'approval')
 }
 
 async function onLogout() {
   await logoutAdmin()
   adminUser.value = null
-  activeSection.value = mode.value === 'user' ? 'locations' : 'itemCreate'
+  activeSection.value = mode.value === 'user' ? 'locations' : 'itemStock'
 }
-const locations = ref([])
-const loading = ref(false)
-const error = ref('')
-
-const locationTypes = {
-  OFFICE: '办公室',
-  STORAGE: '物资室',
-  STORAGE_ROOM: '物资室',
-  MATERIAL_ROOM: '物资室',
-}
-
-const locationStatuses = {
-  ACTIVE: '使用中',
-  INACTIVE: '停用',
-  AVAILABLE: '可用',
-}
-
-function typeLabel(type) {
-  return locationTypes[type] ?? type ?? '未分类'
-}
-
-function statusLabel(status) {
-  return locationStatuses[status] ?? status ?? '状态未设置'
-}
-
-async function loadLocations() {
-  loading.value = true
-  error.value = ''
-  try {
-    locations.value = await getLocations()
-  } catch (cause) {
-    locations.value = []
-    error.value = cause instanceof Error ? cause.message : '读取地点失败。'
-  } finally {
-    loading.value = false
-  }
-}
-
 onMounted(() => {
-  loadLocations()
   if (!enableManagementDemo) refreshAdminSession().then((user) => { adminUser.value = user }).catch(() => { adminUser.value = null })
 })
 </script>
@@ -135,14 +122,14 @@ onMounted(() => {
       <nav class="side-nav" aria-label="主导航">
         <p class="nav-caption">{{ groups[mode].caption }}</p>
         <button
-          v-for="section in sections.filter((item) => item.group === mode && (item.key !== 'login' || !adminUser) && (item.key !== 'userProvision' || adminUser?.roles?.includes('SYSTEM_ADMIN')))"
+          v-for="section in sections.filter((item) => item.group === mode && (item.key !== 'login' || !adminUser) && (item.key !== 'userProvision' || adminUser?.roles?.includes('SYSTEM_ADMIN')) && (item.group !== 'admin' || canManageItems || ['approval', 'bookAsUser'].includes(item.key)))"
           :key="section.key"
           type="button"
           class="nav-button"
           :class="{ active: activeSection === section.key }"
           :aria-current="activeSection === section.key ? 'page' : undefined"
           :disabled="mode === 'admin' && !hasManagementRole"
-          @click="activeSection = section.key"
+          @click="selectSection(section.key)"
         >
           {{ section.label }}
         </button>
@@ -155,61 +142,26 @@ onMounted(() => {
           <AdminLogin @logged-in="onLoggedIn" />
         </template>
 
-        <template v-else-if="activeSection === 'locations'">
-          <section class="hero">
-            <div>
-              <p class="eyebrow">资源目录</p>
-              <h1>先找到物品存放的位置</h1>
-              <p>办公室和物资室是各类共用物品的存放地点，确认位置后再预约物品。</p>
-            </div>
-            <div class="hero-decoration" aria-hidden="true">01<span>/ 04</span></div>
-          </section>
+        <LocationOverview v-else-if="activeSection === 'locations'" @open-location="openLocation" @open-all="openAllItems" />
 
-          <section class="content-section" aria-labelledby="locations-title">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">存放地点一览</p>
-                <h2 id="locations-title">存放地点</h2>
-              </div>
-              <button type="button" class="refresh-button" :disabled="loading" @click="loadLocations">
-                {{ loading ? '读取中…' : '重新读取' }}
-              </button>
-            </div>
-
-            <p v-if="loading" class="state-card" role="status">正在从后端读取地点…</p>
-            <div v-else-if="error" class="state-card error-card" role="alert">
-              <strong>暂时无法显示地点</strong>
-              <p>{{ error }}</p>
-              <button type="button" class="retry-button" @click="loadLocations">重试</button>
-            </div>
-            <p v-else-if="locations.length === 0" class="state-card">暂时没有存放地点。</p>
-            <div v-else class="location-grid">
-              <article v-for="location in locations" :key="location.id" class="location-card">
-                <div class="location-icon" aria-hidden="true">{{ typeLabel(location.type).slice(0, 1) }}</div>
-                <div class="location-copy">
-                  <span class="location-type">{{ typeLabel(location.type) }}</span>
-                  <h3>{{ location.name || `地点 ${location.id}` }}</h3>
-                  <p>状态：{{ statusLabel(location.status) }}</p>
-                </div>
-              </article>
-            </div>
-          </section>
-        </template>
-
-        <ItemsBrowse v-else-if="activeSection === 'items'" :current-user="adminUser" @login-requested="activeSection = 'login'" />
+        <ItemsBrowse v-else-if="activeSection === 'items'" :current-user="adminUser" :initial-location="selectedLocation" @login-requested="activeSection = 'login'" @back-to-locations="activeSection = 'locations'" />
         <MyReservations v-else-if="activeSection === 'mine'" :current-user="adminUser" @login-requested="activeSection = 'login'" />
+        <RoomPrototype v-else-if="activeSection === 'rooms'" :current-user="adminUser" @login-requested="activeSection = 'login'" />
         <UserLogin v-else-if="activeSection === 'login'" @logged-in="onLoggedIn" />
 
         <template v-else-if="mode === 'admin'">
           <p v-if="enableManagementDemo" class="notice" role="status">管理端演示：操作仅改变临时数据，刷新页面会重置，不会保存到数据库。</p>
-          <ItemCreateForm v-if="activeSection === 'itemCreate'" />
-          <ItemStockList v-else-if="activeSection === 'itemStock'" />
+          <ItemStockList v-if="activeSection === 'itemStock'" />
+          <ItemsBrowse v-else-if="activeSection === 'bookAsUser'" workspace="admin" :current-user="adminUser" @login-requested="onLogout" />
+          <SpaceManagement v-else-if="activeSection === 'spaceManage'" />
           <template v-else-if="activeSection === 'returnCheck'">
             <ReturnVerification v-if="enableManagementDemo" />
             <p v-else class="state-card">归还核验等待预约状态与权限模块接入，当前未开放。</p>
           </template>
           <AccountSettings v-else-if="activeSection === 'account'" @profile-changed="adminUser = $event" @password-changed="onLogout" />
-          <UserProvision v-else-if="activeSection === 'userProvision' && adminUser?.roles?.includes('SYSTEM_ADMIN')" />
+          <UserProvision v-else-if="activeSection === 'userProvision' && adminUser?.roles?.includes('SYSTEM_ADMIN')" :current-user="adminUser" />
+          <ApprovalQueue v-else-if="activeSection === 'approval'" :current-user="adminUser" />
+          <BookingLog v-else-if="activeSection === 'bookingLog'" />
         </template>
 
         <section v-else class="placeholder" aria-live="polite">

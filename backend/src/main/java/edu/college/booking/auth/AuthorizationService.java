@@ -51,6 +51,28 @@ public class AuthorizationService {
         }
         return account;
     }
+    public Account requireReviewer(Authentication authentication) {
+        Account account = requireActive(authentication);
+        if (!accounts.isReviewer(account.id())) {
+            throw new ApiProblem(HttpStatus.FORBIDDEN, "FORBIDDEN", "没有审核权限");
+        }
+        return account;
+    }
+
+
+    public Account requireSpaceManager(Authentication authentication) {
+        Account account = requireActive(authentication);
+        if (accounts.grants(account.id()).stream().noneMatch(grant ->
+                "SYSTEM_ADMIN".equals(grant.role()) || "COUNSELOR_ADMIN".equals(grant.role())
+                        || "RESOURCE_MANAGER".equals(grant.role()))) {
+            throw new ApiProblem(HttpStatus.FORBIDDEN, "FORBIDDEN", "没有地点管理权限");
+        }
+        return account;
+    }
+
+    public boolean isCounselor(long userId) {
+        return accounts.grants(userId).stream().anyMatch(grant -> "COUNSELOR_ADMIN".equals(grant.role()));
+    }
 
     public boolean canManageLocation(Authentication authentication, long locationId) {
         Account account = requireActive(authentication);
