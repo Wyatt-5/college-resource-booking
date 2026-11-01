@@ -44,6 +44,11 @@ public class ApiExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "请求参数格式错误", request, exception);
     }
 
+    @ExceptionHandler(ApiProblem.class)
+    public ResponseEntity<ApiError> handleApiProblem(ApiProblem exception, HttpServletRequest request) {
+        return error(exception.status(), exception.code(), exception.getMessage(), request, exception);
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ApiError> handleMissingPath(
             NoResourceFoundException exception, HttpServletRequest request) {

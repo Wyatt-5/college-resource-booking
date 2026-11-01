@@ -124,13 +124,35 @@ async function parseResponse(response, fallbackMessage) {
   return data
 }
 
-// 登录令牌：真实模式下登录成功后写入，后续请求自动携带
-// 同步存 sessionStorage：刷新页面保持登录，关闭标签页即失效
+// 真实模式使用 HttpOnly 会话 Cookie；仅开发演示使用本地模拟令牌。
 const SESSION_KEY = 'crb-admin-session'
 
 let authToken = null
+let csrfToken = null
+let csrfHeaderName = 'X-CSRF-TOKEN'
 function authHeaders() {
-  return authToken ? { Authorization: `Bearer ${authToken}` } : {}
+  return USE_MOCK_ITEMS && authToken ? { Authorization: `Bearer ${authToken}` } : {}
+}
+
+async function ensureCsrf() {
+  if (csrfToken) return { [csrfHeaderName]: csrfToken }
+  const response = await fetch(`${API_BASE}/auth/csrf`, { credentials: 'same-origin' })
+  const data = await parseResponse(response, '获取安全令牌失败')
+  if (!data?.token || !data?.headerName) throw new Error('安全令牌响应格式不符')
+  csrfToken = data.token
+  csrfHeaderName = data.headerName
+  return { [csrfHeaderName]: csrfToken }
+}
+
+function adminFromProfile(profile) {
+  const grants = profile.grants || []
+  return {
+    ...profile,
+    account: profile.loginName,
+    name: profile.displayName,
+    roles: [...grants.map((grant) => grant.role), ...(profile.reviewer ? ['REVIEWER'] : [])],
+    resourceScopes: grants.filter((grant) => grant.role === 'RESOURCE_MANAGER').map((grant) => grant.locationId),
+  }
 }
 
 function saveSession(token, admin) {
@@ -162,7 +184,8 @@ function getJson(path) {
     .then((response) => parseResponse(response, '读取失败'))
 }
 
-function postJson(path, body, idempotencyKey) {
+async function postJson(path, body, idempotencyKey) {
+  const csrf = await ensureCsrf()
   return fetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: {
@@ -170,15 +193,19 @@ function postJson(path, body, idempotencyKey) {
       Accept: 'application/json',
       ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
       ...authHeaders(),
+      ...csrf,
     },
+    credentials: 'same-origin',
     body: JSON.stringify(body),
   }).then((response) => parseResponse(response, '请求失败'))
 }
 
-function patchJson(path, body) {
+async function patchJson(path, body) {
+  const csrf = await ensureCsrf()
   return fetch(`${API_BASE}${path}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(), ...csrf },
+    credentials: 'same-origin',
     body: JSON.stringify(body),
   }).then((response) => parseResponse(response, '更新失败'))
 }
@@ -225,9 +252,11 @@ export async function uploadItemImage(itemId, file) {
   }
   const formData = new FormData()
   formData.append('file', file)
+  const csrf = await ensureCsrf()
   const response = await fetch(`${API_BASE}/items/${itemId}/images`, {
     method: 'POST',
-    headers: { Accept: 'application/json', ...authHeaders() },
+    headers: { Accept: 'application/json', ...authHeaders(), ...csrf },
+    credentials: 'same-origin',
     body: formData,
   })
   return parseResponse(response, '照片上传失败')
@@ -240,9 +269,11 @@ export async function deleteItemImage(itemId, imageId) {
     if (index !== -1) mockImages.splice(index, 1)
     return { deleted: true }
   }
+  const csrf = await ensureCsrf()
   const response = await fetch(`${API_BASE}/items/${itemId}/images/${imageId}`, {
     method: 'DELETE',
-    headers: { Accept: 'application/json', ...authHeaders() },
+    headers: { Accept: 'application/json', ...authHeaders(), ...csrf },
+    credentials: 'same-origin',
   })
   if (!response.ok) {
     await parseResponse(response, '移除照片失败')
@@ -272,6 +303,10 @@ export async function createItemUnit(itemId, unitCode) {
 // 用户端浏览：只看启用中的物品
 export const getPublicItems = (filters) => publicCatalog.list(filters)
 export const getPublicItem = (id) => publicCatalog.detail(id)
+export const getMyReservations = ({ page = 0, size = 20 } = {}) =>
+  getJson(`/me/reservations?page=${page}&size=${size}`)
+export const createReservation = (payload, idempotencyKey) =>
+  postJson('/reservations', payload, idempotencyKey)
 export const getItemImages = (id) => getJson(`/items/${id}/images`)
 export async function readItemImage(itemId, imageId) {
   const response = await fetch(`${API_BASE}/items/${itemId}/images/${imageId}`, { headers: authHeaders() })
@@ -383,6 +418,9 @@ export function getSessionAdmin() {
   return currentAdmin ? publicAdmin(currentAdmin) : null
 }
 
+export const getSessionUser = getSessionAdmin
+export const createUserAccount = (payload) => postJson('/users', payload)
+
 export async function loginAdmin(account, password) {
   if (USE_MOCK_ITEMS) {
     await mockDelay()
@@ -392,27 +430,52 @@ export async function loginAdmin(account, password) {
     saveSession('mock-token', found)
     return { token: 'mock-token', user: publicAdmin(found) }
   }
-  let data
-  try {
-    data = await postJson('/auth/login', { account, password })
-  } catch (error) {
-    if (error.status === 404 || error.status === 405) throw new Error('账号登录接口尚未接入，请与账号模块负责人联调。')
-    throw error
+  const profile = await postJson('/auth/login', { loginName: account, password })
+  if (!profile?.id || !profile?.loginName || !Array.isArray(profile.grants)) {
+    throw new Error('登录响应格式不符，请核对账号模块接口。')
   }
-  if (!data?.user || !data?.token) throw new Error('登录响应格式不符，请核对账号模块接口。')
-  saveSession(data.token, data.user)
-  return data
+  const user = adminFromProfile(profile)
+  saveSession(null, user)
+  return { user }
+
 }
 
-export function logoutAdmin() {
+export async function loginUser(account, password) {
+  const profile = await postJson('/auth/login', { loginName: account, password })
+  if (!profile?.id || !profile?.loginName || !Array.isArray(profile.grants)) {
+    throw new Error('登录响应格式不符，请核对账号模块接口。')
+  }
+  const user = adminFromProfile(profile)
+  saveSession(null, user)
+  return { user }
+}
+
+export async function logoutAdmin() {
+  if (!USE_MOCK_ITEMS && currentAdmin) await postJson('/auth/logout', {})
   currentAdmin = null
   authToken = null
+  csrfToken = null
+  try { sessionStorage.removeItem(SESSION_KEY) } catch { /* storage unavailable */ }
+}
+
+export const logoutUser = logoutAdmin
+
+export async function refreshAdminSession() {
+  if (USE_MOCK_ITEMS) return getSessionAdmin()
   try {
-    sessionStorage.removeItem(SESSION_KEY)
-  } catch {
-    // 存储不可用时无需处理
+    const profile = await getJson('/auth/me')
+    currentAdmin = adminFromProfile(profile)
+    return currentAdmin
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) {
+      currentAdmin = null
+      return null
+    }
+    throw error
   }
 }
+
+export const refreshUserSession = refreshAdminSession
 
 export async function updateMyProfile(input) {
   if (USE_MOCK_ITEMS) {
@@ -453,5 +516,5 @@ export async function getAdminList() {
     return mockAdmins.map(publicAdmin)
   }
   const users = await getJson('/users')
-  return users.filter((user) => (user.roles || []).some((role) => ADMIN_ROLES.includes(role)))
+  return users.map(adminFromProfile).filter((user) => user.roles.some((role) => ADMIN_ROLES.includes(role)))
 }

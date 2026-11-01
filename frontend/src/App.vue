@@ -1,22 +1,27 @@
 <script setup>
-import { onMounted, ref } from 'vue'
-import { getLocations, getSessionAdmin, logoutAdmin, MANAGEMENT_DEMO } from './lib/api'
+import { computed, onMounted, ref } from 'vue'
+import { getLocations, getSessionAdmin, logoutAdmin, refreshAdminSession, MANAGEMENT_DEMO } from './lib/api'
 import AccountSettings from './components/AccountSettings.vue'
 import AdminLogin from './components/AdminLogin.vue'
 import ItemCreateForm from './components/ItemCreateForm.vue'
 import ItemStockList from './components/ItemStockList.vue'
 import ItemsBrowse from './components/ItemsBrowse.vue'
 import ReturnVerification from './components/ReturnVerification.vue'
+import UserLogin from './features/user/UserLogin.vue'
+import MyReservations from './features/user/MyReservations.vue'
+import UserProvision from './features/admin/UserProvision.vue'
 
 const sections = [
   { key: 'locations', label: '存放地点', group: 'user' },
   { key: 'items', label: '物品预约', group: 'user' },
   { key: 'rooms', label: '会议室预约', group: 'user' },
   { key: 'mine', label: '我的预约', group: 'user' },
+  { key: 'login', label: '登录', group: 'user' },
   { key: 'itemCreate', label: '物品上架', group: 'admin' },
   { key: 'itemStock', label: '库存管理', group: 'admin' },
   { key: 'returnCheck', label: '归还核验', group: 'admin' },
   { key: 'account', label: '账号管理', group: 'admin' },
+  { key: 'userProvision', label: '用户账号', group: 'admin' },
 ]
 
 const groups = {
@@ -28,6 +33,8 @@ const mode = ref('user')
 const enableManagementDemo = MANAGEMENT_DEMO
 const activeSection = ref('locations')
 const adminUser = ref(getSessionAdmin())
+const hasManagementRole = computed(() => adminUser.value?.roles?.some((role) =>
+  ['SYSTEM_ADMIN', 'COUNSELOR_ADMIN', 'RESOURCE_MANAGER'].includes(role)))
 
 function switchMode(next) {
   mode.value = next
@@ -36,13 +43,13 @@ function switchMode(next) {
 
 function onLoggedIn(user) {
   adminUser.value = user
-  activeSection.value = 'itemCreate'
+  activeSection.value = mode.value === 'user' ? 'items' : 'itemCreate'
 }
 
-function onLogout() {
-  logoutAdmin()
+async function onLogout() {
+  await logoutAdmin()
   adminUser.value = null
-  activeSection.value = 'itemCreate'
+  activeSection.value = mode.value === 'user' ? 'locations' : 'itemCreate'
 }
 const locations = ref([])
 const loading = ref(false)
@@ -82,7 +89,10 @@ async function loadLocations() {
   }
 }
 
-onMounted(loadLocations)
+onMounted(() => {
+  loadLocations()
+  if (!enableManagementDemo) refreshAdminSession().then((user) => { adminUser.value = user }).catch(() => { adminUser.value = null })
+})
 </script>
 
 <template>
@@ -98,10 +108,11 @@ onMounted(loadLocations)
         </div>
 
         <div class="header-actions">
-          <div v-if="mode === 'admin' && adminUser" class="admin-chip">
+          <div v-if="adminUser" class="admin-chip">
             <span>{{ adminUser.name }}</span>
             <button type="button" class="logout-button" @click="onLogout">退出</button>
           </div>
+          <button v-else-if="mode === 'user'" type="button" class="logout-button" @click="activeSection = 'login'">登录</button>
           <div class="mode-switch" role="tablist" aria-label="切换工作区">
           <button
             v-for="(group, key) in groups"
@@ -124,13 +135,13 @@ onMounted(loadLocations)
       <nav class="side-nav" aria-label="主导航">
         <p class="nav-caption">{{ groups[mode].caption }}</p>
         <button
-          v-for="section in sections.filter((item) => item.group === mode)"
+          v-for="section in sections.filter((item) => item.group === mode && (item.key !== 'login' || !adminUser) && (item.key !== 'userProvision' || adminUser?.roles?.includes('SYSTEM_ADMIN')))"
           :key="section.key"
           type="button"
           class="nav-button"
           :class="{ active: activeSection === section.key }"
           :aria-current="activeSection === section.key ? 'page' : undefined"
-          :disabled="mode === 'admin' && !adminUser"
+          :disabled="mode === 'admin' && !hasManagementRole"
           @click="activeSection = section.key"
         >
           {{ section.label }}
@@ -138,9 +149,9 @@ onMounted(loadLocations)
       </nav>
 
       <main class="main-content">
-        <template v-if="mode === 'admin' && !adminUser">
+        <template v-if="mode === 'admin' && !hasManagementRole">
           <p v-if="enableManagementDemo" class="notice" role="status">管理端演示：使用模拟账号和临时数据，操作不会保存到数据库。</p>
-          <p v-else class="notice" role="status">请使用真实账号登录。账号服务尚未接入时无法登录，不会自动切换模拟账号。</p>
+          <p v-else class="notice" role="status">请使用真实账号登录。登录后才能使用管理功能；系统不会自动切换模拟账号。</p>
           <AdminLogin @logged-in="onLoggedIn" />
         </template>
 
@@ -185,7 +196,9 @@ onMounted(loadLocations)
           </section>
         </template>
 
-        <ItemsBrowse v-else-if="activeSection === 'items'" />
+        <ItemsBrowse v-else-if="activeSection === 'items'" :current-user="adminUser" @login-requested="activeSection = 'login'" />
+        <MyReservations v-else-if="activeSection === 'mine'" :current-user="adminUser" @login-requested="activeSection = 'login'" />
+        <UserLogin v-else-if="activeSection === 'login'" @logged-in="onLoggedIn" />
 
         <template v-else-if="mode === 'admin'">
           <p v-if="enableManagementDemo" class="notice" role="status">管理端演示：操作仅改变临时数据，刷新页面会重置，不会保存到数据库。</p>
@@ -195,10 +208,8 @@ onMounted(loadLocations)
             <ReturnVerification v-if="enableManagementDemo" />
             <p v-else class="state-card">归还核验等待预约状态与权限模块接入，当前未开放。</p>
           </template>
-          <AccountSettings v-else-if="activeSection === 'account'"
-          @profile-changed="adminUser = $event"
-          @password-changed="onLogout"
-          />
+          <AccountSettings v-else-if="activeSection === 'account'" @profile-changed="adminUser = $event" @password-changed="onLogout" />
+          <UserProvision v-else-if="activeSection === 'userProvision' && adminUser?.roles?.includes('SYSTEM_ADMIN')" />
         </template>
 
         <section v-else class="placeholder" aria-live="polite">

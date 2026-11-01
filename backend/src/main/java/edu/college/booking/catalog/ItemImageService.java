@@ -36,9 +36,8 @@ public class ItemImageService {
                 (r,n)->view(r.getLong(1),r.getLong(2),r.getString(3)),item);
     }
     private void readable(long id){
-        CatalogAccess.Actor actor=access.current();
         Item item=items.required(id,false);
-        try{items.detail(id);}catch(CatalogException e){actor.require(item.locationId());}
+        try{items.detail(id);}catch(CatalogException e){access.current().require(item.locationId());}
     }
     @Transactional
     public ItemImage upload(long item,MultipartFile file) throws IOException{

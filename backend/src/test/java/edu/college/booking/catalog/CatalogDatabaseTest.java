@@ -1,6 +1,8 @@
 package edu.college.booking.catalog;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.mockito.BDDMockito.given;
@@ -38,11 +40,12 @@ class CatalogDatabaseTest {
     @MockitoBean ReservationReturnGateway returns;
     long location,other;
     @BeforeEach void setup(){
+        given(scopes.managesAllLocations("catalog-test-admin")).willReturn(true);
         location=db.queryForObject("INSERT INTO locations(name,type) VALUES (?,'STORAGE') RETURNING id",Long.class,"catalog-test-"+UUID.randomUUID());
         other=db.queryForObject("INSERT INTO locations(name,type) VALUES (?,'OFFICE') RETURNING id",Long.class,"catalog-test-"+UUID.randomUUID());
     }
-    static RequestPostProcessor admin(){return r->{r.setUserPrincipal(()->"catalog-test-admin");r.addUserRole("SYSTEM_ADMIN");return r;};}
-    static RequestPostProcessor user(String name){return r->{r.setUserPrincipal(()->name);return r;};}
+    static RequestPostProcessor admin(){return r->csrf().postProcessRequest(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("catalog-test-admin").roles("SYSTEM_ADMIN").postProcessRequest(r));}
+    static RequestPostProcessor user(String name){return r->csrf().postProcessRequest(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(name).postProcessRequest(r));}
     String body(long place,String name)throws Exception{
         return json.writeValueAsString(Map.of("name",name,"locationId",place,"description","镜头及相机包","isValuable",true,"status","ACTIVE","rules",Map.of("maxBorrowDays",7,"advanceDays",0)));
     }
@@ -70,7 +73,7 @@ class CatalogDatabaseTest {
     }
     @Test void validationAndScopeCannotBeBypassedByClientRole()throws Exception{
         long id=create(location,"受控物品");
-        mvc.perform(post("/api/v1/items").header("X-Role","SYSTEM_ADMIN").header("Authorization","Bearer mock-token")
+        mvc.perform(post("/api/v1/items").with(csrf()).header("X-Role","SYSTEM_ADMIN").header("Authorization","Bearer mock-token")
                 .contentType("application/json").content(body(location,"伪造身份")))
           .andExpect(status().isUnauthorized());
         mvc.perform(patch("/api/v1/items/"+id).with(user("ordinary-user")).contentType("application/json").content("{\"name\":\"越权\"}"))
@@ -136,10 +139,17 @@ class CatalogDatabaseTest {
           .andExpect(jsonPath("$.url").exists()).andExpect(jsonPath("$.storageKey").doesNotExist())
           .andReturn().getResponse().getContentAsString();
         long image=json.readTree(response).get("id").asLong();
-        mvc.perform(get("/api/v1/items/"+item+"/images/"+image)).andExpect(status().isUnauthorized());
-        mvc.perform(get("/api/v1/items/"+item+"/images/"+image).with(user("reader")))
+        mvc.perform(get("/api/v1/items/"+item+"/images")).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1));
+        mvc.perform(get("/api/v1/items/"+item+"/images/"+image))
           .andExpect(status().isOk()).andExpect(content().contentType("image/png"))
           .andExpect(header().string("Cache-Control","no-store")).andExpect(content().bytes(png()));
+        mvc.perform(patch("/api/v1/items/"+item).with(admin()).contentType("application/json").content("{\"status\":\"INACTIVE\"}"))
+          .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/items/"+item+"/images/"+image)).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/items/"+item+"/images/"+image).with(user("reader"))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/items/"+item+"/images/"+image).with(admin())).andExpect(status().isOk());
+        mvc.perform(patch("/api/v1/items/"+item).with(admin()).contentType("application/json").content("{\"status\":\"ACTIVE\"}"))
+          .andExpect(status().isOk());
         mvc.perform(get("/api/v1/items/"+second+"/images/"+image).with(admin())).andExpect(status().isNotFound());
         mvc.perform(multipart("/api/v1/items/"+item+"/images").file(new MockMultipartFile("file","fake.png","image/png","not-an-image".getBytes())).with(admin()))
           .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.file").exists());

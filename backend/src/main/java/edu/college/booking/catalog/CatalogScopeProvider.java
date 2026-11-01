@@ -2,7 +2,8 @@ package edu.college.booking.catalog;
 
 import java.util.Set;
 
-/** Optional integration point implemented by the team's resource-grant service. */
+/** Reads current grants for a server-verified login name. */
 public interface CatalogScopeProvider {
+    boolean managesAllLocations(String verifiedPrincipalName);
     Set<Long> manageableLocations(String verifiedPrincipalName);
 }

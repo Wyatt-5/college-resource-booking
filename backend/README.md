@@ -27,7 +27,17 @@ Mac/Linux：`cp .env.example .env`、`docker compose -f infra/compose.yaml up -d
 | `GET /api/v1/items` | 数组；显式传page/size时返回分页对象 | 已上架物品，支持地点、名称/介绍、可借库存筛选；scope=managed需管理权限 |
 | `GET /api/v1/items/{id}` | 物品、规则、实物库存摘要 | 不存在或停用返回 404 |
 
-首次启动时 Flyway 自动执行迁移。目前预置三间办公室和一间物资室，不预置物品。V3建立资源表，V4对齐前端清单并增加幂等与审计事件。物品新增/部分编辑、实物查询/新增/状态维护、展示照片上传/受控读取/删除已有实现。归还核验业务服务需要预约模块提供适配器；正式登录、授权数据源、用户取件/提交归还尚未接入。具体接口、依赖、暂定规则和验证见 [资源模型与物品接口说明](../docs/资源模型与物品接口说明.md)。
+首次启动时 Flyway 自动执行迁移。目前预置三间办公室和一间物资室，不预置物品。V3/V4 建立物品与图片，V5 建立账号、授权和全局审计，V6 建立物品预约。普通物品预约在同一数据库事务中锁定物品并校验时段容量；贵重物品申请进入待审核。物品事件与预约创建会写入审计日志。公开上架物品的照片可匿名读取，停用物品照片需管理权限。审批、用户取件/提交归还及真实归还核验适配器仍待开发。详见 [资源模型与物品接口说明](../docs/资源模型与物品接口说明.md)。
+
+## 首次管理员与登录接口
+
+账号表为空时，在本地 `.env` 中临时增加 `BOOTSTRAP_ADMIN_LOGIN` 与 `BOOTSTRAP_ADMIN_PASSWORD`（至少 12 位），再启动后端。程序只会在没有任何账号时建立一位 `SYSTEM_ADMIN`，密码只存 BCrypt 哈希；账号建好后从 `.env` 移除这两行。不得把真实账号密码提交到 GitHub。生产环境应通过受保护的环境变量提供首次凭据，并配置 `SESSION_COOKIE_SECURE=true` 与 HTTPS。
+
+用户接口：`GET /api/v1/auth/csrf`、`POST /api/v1/auth/login`、`GET /api/v1/auth/me`、`POST /api/v1/auth/logout`。管理员接口：`GET/POST /api/v1/users`、`PUT /api/v1/users/{id}/grants`、`GET /api/v1/audit-logs`。具体字段见 `../contracts/openapi/openapi.yaml`。账号由系统管理员建立，无公开注册；系统管理员不能修改自己的授权。
+
+物品预约接口：`POST /api/v1/reservations`（登录后，提交 `Idempotency-Key` 和物品 ID、开始/结束时间、用途、数量）；`GET /api/v1/me/reservations` 仅返回本人申请。普通物品库存足够时为 `CONFIRMED`，贵重物品为 `PENDING_APPROVAL`。物品须至少录入一件 `AVAILABLE` 实物，并配置提前天数与最长借用天数。
+
+浏览器先请求 `GET /api/v1/auth/csrf`，保存会话 Cookie，并在登录、退出和其他写请求中携带返回的 `headerName`/`token` 请求头。登录后继续使用同一会话 Cookie；无会话返回 401，越权返回 403。现有 Vue 管理登录页已接入这一会话协议。
 
 查看响应：
 
@@ -45,6 +55,6 @@ cd backend
 .\mvnw.cmd test
 ```
 
-默认测试检查接口契约与参数校验，不需要数据库。设置 `CATALOG_DB_TEST=true` 启用真实 PostgreSQL 测试，包括并发幂等、权限、实物状态、照片和核验回滚。事务测试回滚数据；并发/回滚测试清理自己的独立记录。CI已启用真实数据库测试。
+测试检查健康、地点、目录接口、登录会话/CSRF 和基础授权规则。设置 `CATALOG_DB_TEST=true` 可启用真实 PostgreSQL 物品测试，包括并发幂等、权限、实物状态、照片和核验回滚。数据库端到端检查需启动 PostgreSQL。
 
 新模块按 `controller -> service -> repository` 分层；数据库变更只新增 Flyway 迁移文件，**不要修改已经被共享数据库执行过的迁移文件**。新增或修改接口时同步修改 `../contracts/openapi/openapi.yaml`，再让前端联调。

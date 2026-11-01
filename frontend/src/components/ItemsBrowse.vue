@@ -28,7 +28,8 @@
     <div v-else class="items-grid">
       <article v-for="item in visibleItems" :key="item.id" class="item-card">
         <div class="item-photo">
-          <span aria-hidden="true">📦</span>
+          <img v-if="item.images?.length" class="item-cover" :src="item.images[0].url" :alt="`${item.name}的展示照片`">
+          <span v-else aria-hidden="true">📦</span>
           <span v-if="(item.images || []).length > 0" class="photo-count">{{ item.images.length }} 张照片</span>
         </div>
         <div class="item-body">
@@ -71,15 +72,14 @@
         </div>
         <p class="modal-desc">{{ detail.description || '暂无介绍。' }}</p>
         <div v-if="detail.images?.length">
-          <button class="link-button" :disabled="photoLoading" @click="loadPhotos">{{ photoLoading ? '读取照片中…' : '查看照片（需登录）' }}</button>
-          <p v-if="photoError" class="field-error">{{ photoError }}</p>
-          <div class="photo-grid"><img v-for="photo in photos" :key="photo.url" :src="photo.url" :alt="photo.name" style="max-width:100%;max-height:220px"></div>
+          <div class="photo-grid"><img v-for="photo in detail.images" :key="photo.id" :src="photo.url" :alt="photo.fileName"></div>
         </div>
         <dl class="rule-list">
           <div><dt>单次最长借用</dt><dd>{{ borrowLimit(detail) }}</dd></div>
           <div><dt>可提前预约</dt><dd>{{ advanceLimit(detail) }}</dd></div>
           <div><dt>归还要求</dt><dd>归还时需拍照，待管理员核验通过后才完成归还。</dd></div>
         </dl>
+        <ReservationForm :key="detail.id" :item="detail" :current-user="currentUser" @login-requested="emit('login-requested')" />
         </template>
       </div>
     </div>
@@ -88,7 +88,10 @@
 
 <script setup>
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
-import { getLocations, getPublicItems, getPublicItem, readItemImage } from '../lib/api'
+import { getLocations, getPublicItems, getPublicItem } from '../lib/api'
+import ReservationForm from '../features/user/ReservationForm.vue'
+defineProps({ currentUser: { type: Object, default: null } })
+const emit = defineEmits(['login-requested'])
 const visibleItems = ref([])
 const locations = ref([])
 const loading = ref(false)
@@ -97,9 +100,6 @@ const locationsError = ref('')
 const detail = ref(null)
 const detailError = ref('')
 const detailLoading = ref(false)
-const photos = ref([])
-const photoLoading = ref(false)
-const photoError = ref('')
 const page = ref(0)
 const size = 12
 const total = ref(0)
@@ -141,25 +141,8 @@ function applyFilters(debounce = false) {
   else loadItems()
 }
 function changePage(next) { page.value = next; loadItems() }
-function clearPhotos() { for (const photo of photos.value) URL.revokeObjectURL(photo.url); photos.value = []; photoLoading.value = false; photoError.value = '' }
-function closeDetail() { ++detailVersion; detail.value = null; detailError.value = ''; detailLoading.value = false; clearPhotos() }
-async function loadPhotos() {
-  clearPhotos()
-  const version = detailVersion
-  const item = detail.value
-  photoLoading.value = true
-  try {
-    for (const image of item.images) {
-      const blob = await readItemImage(item.id, image.id)
-      if (version !== detailVersion) return
-      photos.value.push({ name: image.fileName, url: URL.createObjectURL(blob) })
-    }
-  } catch (error) {
-    if (version === detailVersion) { clearPhotos(); photoError.value = error.status === 401 ? '请先登录后查看照片。' : error.message }
-  } finally { if (version === detailVersion) photoLoading.value = false }
-}
+function closeDetail() { ++detailVersion; detail.value = null; detailError.value = ''; detailLoading.value = false }
 async function openDetail(item) {
-  clearPhotos()
   const version = ++detailVersion
   detail.value = item; detailLoading.value = true; detailError.value = ''
   try { const data = await getPublicItem(item.id); if (version === detailVersion) detail.value = data }
@@ -168,5 +151,5 @@ async function openDetail(item) {
 }
 function onKeydown(event) { if (event.key === 'Escape') closeDetail() }
 onMounted(() => { loadLocations(); loadItems(); window.addEventListener('keydown', onKeydown) })
-onUnmounted(() => { clearTimeout(searchTimer); ++listVersion; ++detailVersion; clearPhotos(); window.removeEventListener('keydown', onKeydown) })
+onUnmounted(() => { clearTimeout(searchTimer); ++listVersion; ++detailVersion; window.removeEventListener('keydown', onKeydown) })
 </script>

@@ -1,6 +1,9 @@
 package edu.college.booking.catalog;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import java.util.*;
 import java.util.concurrent.*;
@@ -11,6 +14,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest
@@ -20,22 +24,25 @@ class CatalogConcurrencyTest {
     @Autowired JdbcTemplate db;
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @MockitoBean CatalogScopeProvider scopes;
     @Test void missingReservationAdapterIsExplicitlyUnavailable()throws Exception{
+        given(scopes.managesAllLocations("adapter-test")).willReturn(true);
         mvc.perform(post("/api/v1/reservations/9001/return-verification")
-                .with(r->{r.setUserPrincipal(()->"adapter-test");r.addUserRole("SYSTEM_ADMIN");return r;})
+                .with(user("adapter-test").roles("SYSTEM_ADMIN")).with(csrf())
                 .header("Idempotency-Key","adapter-test").contentType("application/json").content("{\"decision\":\"ACCEPT\"}"))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isServiceUnavailable())
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("DEPENDENCY_UNAVAILABLE"));
     }
     @Test void concurrentIdenticalRequestsCreateOneItemAndOneAuditEvent()throws Exception{
         String actor="concurrency-"+UUID.randomUUID(),key=UUID.randomUUID().toString();
+        given(scopes.managesAllLocations(actor)).willReturn(true);
         long location=db.queryForObject("INSERT INTO locations(name,type) VALUES (?,'STORAGE') RETURNING id",Long.class,actor);
         var pool=Executors.newFixedThreadPool(2);
         var start=new CountDownLatch(1);
         try{
             Callable<Long> create=()->{
                 start.await();
-                var response=mvc.perform(post("/api/v1/items").with(r->{r.setUserPrincipal(()->actor);r.addUserRole("SYSTEM_ADMIN");return r;})
+                var response=mvc.perform(post("/api/v1/items").with(user(actor).roles("SYSTEM_ADMIN")).with(csrf())
                     .header("Idempotency-Key",key).contentType("application/json")
                     .content("{\"locationId\":"+location+",\"name\":\"并发相机\"}")).andReturn().getResponse();
                 assertEquals(201,response.getStatus(),response.getContentAsString());
