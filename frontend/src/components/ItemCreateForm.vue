@@ -55,9 +55,14 @@ const statusEnabled = computed({
   },
 })
 
+// 步骤条同一时刻只能有一个 active：第 2、3 步同时可见，因此按“是否已有照片、
+// 是否已有实物编号”判断进度，而不是创建完成后把所有后续步骤都标成 active。
 function stepClass(index) {
   if (!createdItem.value) return index === 0 ? 'active' : ''
-  return index === 0 ? 'done' : 'active'
+  if (index === 0) return 'done'
+  if (index === 1) return images.value.length ? 'done' : 'active'
+  if (units.value.length) return 'done'
+  return images.value.length ? 'active' : ''
 }
 
 function locationName(locationId) {
