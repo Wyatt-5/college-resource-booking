@@ -1,16 +1,48 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { getLocations } from './lib/api'
+import { getLocations, getSessionAdmin, logoutAdmin } from './lib/api'
+import AccountSettings from './components/AccountSettings.vue'
+import AdminLogin from './components/AdminLogin.vue'
+import ItemCreateForm from './components/ItemCreateForm.vue'
+import ItemStockList from './components/ItemStockList.vue'
+import ItemsBrowse from './components/ItemsBrowse.vue'
+import ReturnVerification from './components/ReturnVerification.vue'
 
 const sections = [
-  { key: 'locations', label: '存放地点', group: '用户端' },
-  { key: 'items', label: '物品预约', group: '用户端' },
-  { key: 'rooms', label: '会议室预约', group: '用户端' },
-  { key: 'mine', label: '我的预约', group: '用户端' },
-  { key: 'admin', label: '管理后台', group: '管理员端' },
+  { key: 'locations', label: '存放地点', group: 'user' },
+  { key: 'items', label: '物品预约', group: 'user' },
+  { key: 'rooms', label: '会议室预约', group: 'user' },
+  { key: 'mine', label: '我的预约', group: 'user' },
+  { key: 'itemCreate', label: '物品上架', group: 'admin' },
+  { key: 'itemStock', label: '库存管理', group: 'admin' },
+  { key: 'returnCheck', label: '归还核验', group: 'admin' },
+  { key: 'account', label: '账号管理', group: 'admin' },
 ]
 
+const groups = {
+  user: { label: '用户端', caption: '资源预约' },
+  admin: { label: '管理端', caption: '管理后台' },
+}
+
+const mode = ref('user')
 const activeSection = ref('locations')
+const adminUser = ref(getSessionAdmin())
+
+function switchMode(next) {
+  mode.value = next
+  activeSection.value = sections.find((item) => item.group === next).key
+}
+
+function onLoggedIn(user) {
+  adminUser.value = user
+  activeSection.value = 'itemCreate'
+}
+
+function onLogout() {
+  logoutAdmin()
+  adminUser.value = null
+  activeSection.value = 'itemCreate'
+}
 const locations = ref([])
 const loading = ref(false)
 const error = ref('')
@@ -57,54 +89,62 @@ onMounted(loadLocations)
     <header class="site-header">
       <div class="header-inner">
         <div class="brand" aria-label="学院共用资源预约与借还系统">
-          <span class="brand-mark" aria-hidden="true">共</span>
+          <img class="brand-logo" src="/logo.png" alt="汕头大学数学与计算机学院">
           <div>
-            <strong>学院共用资源</strong>
-            <small>预约与借还系统</small>
+            <strong>共用资源预约与借还系统</strong>
+            <small>数学与计算机学院</small>
           </div>
         </div>
-        <span class="stage-tag">项目骨架 · 开发中</span>
+
+        <div class="header-actions">
+          <div v-if="mode === 'admin' && adminUser" class="admin-chip">
+            <span>{{ adminUser.name }}</span>
+            <button type="button" class="logout-button" @click="onLogout">退出</button>
+          </div>
+          <div class="mode-switch" role="tablist" aria-label="切换工作区">
+          <button
+            v-for="(group, key) in groups"
+            :key="key"
+            type="button"
+            role="tab"
+            class="mode-tab"
+            :class="{ active: mode === key }"
+            :aria-selected="mode === key"
+            @click="switchMode(key)"
+          >
+            {{ group.label }}
+          </button>
+          </div>
+        </div>
       </div>
     </header>
 
-    <div class="layout">
+    <div class="layout" :class="`mode-${mode}`">
       <nav class="side-nav" aria-label="主导航">
-        <p class="nav-caption">用户端</p>
+        <p class="nav-caption">{{ groups[mode].caption }}</p>
         <button
-          v-for="section in sections.filter((item) => item.group === '用户端')"
+          v-for="section in sections.filter((item) => item.group === mode)"
           :key="section.key"
           type="button"
           class="nav-button"
           :class="{ active: activeSection === section.key }"
           :aria-current="activeSection === section.key ? 'page' : undefined"
+          :disabled="mode === 'admin' && !adminUser"
           @click="activeSection = section.key"
         >
           {{ section.label }}
         </button>
-        <p class="nav-caption admin-caption">管理员端</p>
-        <button
-          type="button"
-          class="nav-button"
-          :class="{ active: activeSection === 'admin' }"
-          :aria-current="activeSection === 'admin' ? 'page' : undefined"
-          @click="activeSection = 'admin'"
-        >
-          管理后台
-        </button>
-        <p class="nav-note">登录和权限尚未实现，管理入口仅展示规划。</p>
       </nav>
 
       <main class="main-content">
-        <div class="notice" role="status">
-          当前只接通地点读取接口。预约、登录、审批、借还和管理操作尚未实现。
-        </div>
+        <AdminLogin v-if="mode === 'admin' && !adminUser" @logged-in="onLoggedIn" />
 
-        <template v-if="activeSection === 'locations'">
+        <template v-else-if="activeSection === 'locations'">
           <section class="hero">
             <div>
-              <p class="eyebrow">资源目录 · 第一步</p>
+              <p class="eyebrow">资源目录</p>
               <h1>先找到物品存放的位置</h1>
-              <p>这里直接读取后端的地点数据。办公室和物资室是存放地点；物品列表将在下一阶段接入。</p>
+              <p>办公室和物资室是各类共用物品的存放地点，确认位置后再预约物品。</p>
             </div>
             <div class="hero-decoration" aria-hidden="true">01<span>/ 04</span></div>
           </section>
@@ -112,7 +152,7 @@ onMounted(loadLocations)
           <section class="content-section" aria-labelledby="locations-title">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">真实接口 /api/v1/locations</p>
+                <p class="eyebrow">存放地点一览</p>
                 <h2 id="locations-title">存放地点</h2>
               </div>
               <button type="button" class="refresh-button" :disabled="loading" @click="loadLocations">
@@ -126,7 +166,7 @@ onMounted(loadLocations)
               <p>{{ error }}</p>
               <button type="button" class="retry-button" @click="loadLocations">重试</button>
             </div>
-            <p v-else-if="locations.length === 0" class="state-card">地点表目前没有数据。请先检查后端迁移和初始数据。</p>
+            <p v-else-if="locations.length === 0" class="state-card">暂时没有存放地点。</p>
             <div v-else class="location-grid">
               <article v-for="location in locations" :key="location.id" class="location-card">
                 <div class="location-icon" aria-hidden="true">{{ typeLabel(location.type).slice(0, 1) }}</div>
@@ -140,17 +180,24 @@ onMounted(loadLocations)
           </section>
         </template>
 
+        <ItemsBrowse v-else-if="activeSection === 'items'" />
+
+        <ItemCreateForm v-else-if="activeSection === 'itemCreate'" />
+        <ItemStockList v-else-if="activeSection === 'itemStock'" />
+        <ReturnVerification v-else-if="activeSection === 'returnCheck'" />
+        <AccountSettings
+          v-else-if="activeSection === 'account'"
+          @profile-changed="adminUser = $event"
+          @password-changed="onLogout"
+        />
+
         <section v-else class="placeholder" aria-live="polite">
-          <p class="eyebrow">待开发模块</p>
+          <p class="eyebrow">{{ groups[sections.find((item) => item.key === activeSection)?.group]?.label }}</p>
           <h1>{{ sections.find((item) => item.key === activeSection)?.label }}</h1>
-          <p v-if="activeSection === 'admin'">管理员登录、资源维护、审批和日志功能尚未实现。后续必须由后端鉴权，不能仅靠隐藏页面控制权限。</p>
-          <p v-else-if="activeSection === 'items'">物品列表、预约、确认取件和拍照归还接口尚未实现。</p>
-          <p v-else-if="activeSection === 'rooms'">会议室日历、预约冲突检查和辅导员优先审核尚未实现。</p>
-          <p v-else>登录和“我的预约”接口尚未实现。</p>
-          <div class="placeholder-box">组员可在这里接入各自负责的页面与接口。</div>
+          <div class="placeholder-box">暂无内容。</div>
         </section>
 
-        <footer class="site-footer">学院共用资源预约与借还系统 · 开发骨架</footer>
+        <footer class="site-footer">学院共用资源预约与借还系统</footer>
       </main>
     </div>
   </div>
