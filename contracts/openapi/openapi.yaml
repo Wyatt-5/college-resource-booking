@@ -1,16 +1,178 @@
 openapi: 3.0.3
 info:
   title: 学院共用资源预约与借还系统 API
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    本文件列出已约定或计划立即联调的接口。
-    /items、/reservations 相关接口为 3 号（后端）与 4 号（前端）约定的契约，
-    前端当前按本契约使用模拟数据开发，后端实现后逐接口切换并联调。
-    完整业务接口见 docs/开发约束.md；新增接口须先更新本文件，再提交代码。
+    当前已实现账号登录与权限、物品目录、实物和展示照片接口。
+    登录与写操作使用服务端会话；浏览器先 GET /auth/csrf，再提交令牌。
+    普通物品预约、贵重物品和地点预约单人审核、我的预约已实现；取还件接口仍待接入。
+    本契约须与实际代码同步，未实现的接口不得标为可用。
 servers:
-  - url: http://localhost:8080/api/v1
-    description: 本地开发；部署后通过环境配置替换地址
+- url: http://localhost:8080/api/v1
+  description: 本地开发；部署后通过环境配置替换地址
 paths:
+  /auth/csrf:
+    get:
+      summary: 获取会话 CSRF 令牌
+      operationId: getCsrf
+      responses:
+        '200':
+          description: 返回 token 和需要提交的请求头名称
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfToken'
+  /auth/login:
+    post:
+      summary: 登录（需 CSRF 令牌）
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功；服务端建立会话
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+              example:
+                id: 1
+                loginName: demo.admin
+                displayName: 初始系统管理员
+                status: ACTIVE
+                grants:
+                  - role: SYSTEM_ADMIN
+                    locationId: null
+                reviewer: false
+        '401':
+          description: 账号或密码错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                code: INVALID_CREDENTIALS
+                message: 账号或密码错误
+                details: {}
+                requestId: 00000000-0000-0000-0000-000000000000
+  /auth/me:
+    get:
+      summary: 查询当前登录用户和最新授权
+      operationId: currentUser
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+              example:
+                id: 1
+                loginName: demo.admin
+                displayName: 初始系统管理员
+                status: ACTIVE
+                grants:
+                  - role: SYSTEM_ADMIN
+                    locationId: null
+                reviewer: false
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /auth/logout:
+    post:
+      summary: 退出登录（需 CSRF 令牌）
+      operationId: logout
+      responses:
+        '204':
+          description: 会话已失效
+  /users:
+    get:
+      summary: 系统管理员查看账号
+      operationId: listUsers
+      responses:
+        '200':
+          description: 账号列表；不返回密码哈希
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserProfile'
+        '403':
+          description: 无系统管理权限
+    post:
+      summary: 系统管理员建立账号（需 CSRF 令牌）
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewUser'
+      responses:
+        '201':
+          description: 账号已建立
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '409':
+          description: 账号已存在
+  /users/{id}/grants:
+    put:
+      summary: 系统管理员替换某账号授权和审核小组身份（需 CSRF 令牌；不得修改自己）
+      operationId: replaceGrants
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantUpdate'
+      responses:
+        '200':
+          description: 最新授权
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '409':
+          description: 禁止修改自己的授权
+  /audit-logs:
+    get:
+      summary: 系统管理员读取最近审计记录
+      operationId: listAuditLogs
+      parameters:
+        - name: size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: 最近审计记录
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
   /health:
     get:
       summary: 后端进程健康检查
@@ -46,77 +208,307 @@ paths:
       summary: 物品列表（管理端/浏览）
       operationId: listItems
       parameters:
-        - name: locationId
-          in: query
-          schema: { type: integer, format: int64 }
-        - name: keyword
-          in: query
-          schema: { type: string }
-        - name: status
-          in: query
-          schema: { type: string, enum: [ACTIVE, INACTIVE] }
+      - name: locationId
+        in: query
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: keyword
+        in: query
+        description: 名称或介绍包含匹配；%和_按字面匹配
+        schema:
+          type: string
+          maxLength: 100
+          default: ''
+      - name: status
+        in: query
+        description: 公开目录仅支持ACTIVE；INACTIVE需scope=managed并授权
+        schema:
+          type: string
+          enum:
+          - ACTIVE
+          - INACTIVE
+      - name: scope
+        in: query
+        schema:
+          type: string
+          enum:
+          - public
+          - managed
+          default: public
+      - name: onlyAvailable
+        in: query
+        description: 当前至少有一件AVAILABLE实物，不代表预约时段可用量
+        schema:
+          type: boolean
+          default: false
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: size
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
       responses:
         '200':
-          description: 物品列表，含库存摘要
+          description: 物品及服务端库存摘要
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/Item' }
+                oneOf:
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/Item'
+                - $ref: '#/components/schemas/ItemPage'
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+                format: int64
+              description: 筛选后的总数量
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: 资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      description: '未传page和size时保留PR #2的数组格式（默认最多20条）；显式传任一分页参数时返回分页对象。X-Total-Count始终返回总数。scope=managed仅返回本人可管理地点的物品。'
     post:
       summary: 上架物品（管理员）
       operationId: createItem
       parameters:
-        - name: Idempotency-Key
-          in: header
-          schema: { type: string }
-          description: 防重复提交
+      - name: Idempotency-Key
+        in: header
+        schema:
+          type: string
+          maxLength: 200
+        description: 防重复提交
+        required: true
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ItemInput' }
+            schema:
+              $ref: '#/components/schemas/ItemInput'
       responses:
         '201':
           description: 创建成功
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Item' }
-        '400': { $ref: '#/components/responses/ValidationError' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+              schema:
+                $ref: '#/components/schemas/Item'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - sessionCookie: []
   /items/{itemId}:
     patch:
       summary: 编辑物品（管理员）
       operationId: updateItem
       parameters:
-        - $ref: '#/components/parameters/ItemId'
+      - $ref: '#/components/parameters/ItemId'
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ItemInput' }
+            schema:
+              $ref: '#/components/schemas/ItemPatch'
       responses:
         '200':
           description: 更新后的物品
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Item' }
-        '400': { $ref: '#/components/responses/ValidationError' }
-        '404': { $ref: '#/components/responses/NotFound' }
+              schema:
+                $ref: '#/components/schemas/Item'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      description: 部分更新，省略字段保持不变；rules按子字段合并。地点变更同时检查原地点和新地点授权。贵重标记不会修改既有预约快照，预约模块必须保留申请创建时的规则。
+      security:
+      - sessionCookie: []
+    get:
+      summary: 物品详情
+      operationId: getItem
+      parameters:
+      - $ref: '#/components/parameters/ItemId'
+      - name: managed
+        in: query
+        schema:
+          type: boolean
+          default: false
+        description: true时校验管理范围并允许查看停用物品
+      responses:
+        '200':
+          description: 含创建时间、库存、规则及受控图片地址
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '404':
+          description: 不存在或未上架
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /items/{itemId}/availability:
+    get:
+      summary: 公开查看物品单日逐小时库存（北京时间）
+      operationId: itemAvailability
+      parameters:
+      - $ref: '#/components/parameters/ItemId'
+      - name: date
+        in: query
+        required: true
+        schema: { type: string, format: date }
+      responses:
+        '200':
+          description: 返回24个小时的峰值占用、剩余库存及待审数量，不包含申请人信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date: { type: string, format: date }
+                  total: { type: integer, description: 当前可参与预约的实物数量 }
+                  slots:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        hour: { type: integer, minimum: 0, maximum: 23 }
+                        reserved: { type: integer }
+                        available: { type: integer }
+                        pending: { type: integer }
+        '404':
+          description: 物品不存在或已停用
   /items/{itemId}/images:
     post:
       summary: 上传物品展示照片（管理员）
       operationId: uploadItemImage
       parameters:
-        - $ref: '#/components/parameters/ItemId'
+      - $ref: '#/components/parameters/ItemId'
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
-              required: [file]
+              required:
+              - file
               properties:
                 file:
                   type: string
@@ -127,28 +519,257 @@ paths:
           description: 上传成功
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ItemImage' }
-        '400': { $ref: '#/components/responses/ValidationError' }
-        '404': { $ref: '#/components/responses/NotFound' }
+              schema:
+                $ref: '#/components/schemas/ItemImage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      description: 按真实内容解码校验JPEG/PNG/WebP，最多5MiB、20百万像素、边长10000；默认每物品最多6张，可配置。张数上限为本地采用的暂定方案，待组内确认。
+      security:
+      - sessionCookie: []
+    get:
+      summary: 读取物品展示照片元数据
+      operationId: listItemImages
+      parameters:
+      - $ref: '#/components/parameters/ItemId'
+      responses:
+        '200':
+          description: 公开上架物品可匿名读取；停用物品需对应地点管理权限
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ItemImage'
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: 资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - {}
+      - sessionCookie: []
   /items/{itemId}/images/{imageId}:
     delete:
       summary: 移除物品展示照片（管理员）
       operationId: deleteItemImage
       parameters:
-        - $ref: '#/components/parameters/ItemId'
-        - name: imageId
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
+      - $ref: '#/components/parameters/ItemId'
+      - name: imageId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
       responses:
-        '204': { description: 已删除 }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '204':
+          description: 已删除
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - sessionCookie: []
+    get:
+      summary: 读取物品展示照片二进制
+      operationId: readItemImage
+      parameters:
+      - $ref: '#/components/parameters/ItemId'
+      - name: imageId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: 公开上架物品可匿名读取；停用物品需对应地点管理权限；no-store，nosniff
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: 资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - {}
+      - sessionCookie: []
+  /items/{itemId}/stock:
+    put:
+      summary: 设置物品库存总数（管理员，实物编号由服务端自动生成）
+      operationId: setItemStock
+      parameters:
+      - $ref: '#/components/parameters/ItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - quantity
+              additionalProperties: false
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 0
+                  maximum: 500
+      responses:
+        '200':
+          description: 更新后的物品及库存摘要
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 存在未结束预约，或需移除的实物不是可借状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      description: 增量生成不复用的编号；调低数量只移除最新的AVAILABLE实物。存在未结束的CONFIRMED预约或可移除实物不足时返回409，库存保持不变。
+      security:
+      - sessionCookie: []
   /items/{itemId}/units:
     get:
       summary: 查看物品的具体实物
       operationId: listItemUnits
       parameters:
-        - $ref: '#/components/parameters/ItemId'
+      - $ref: '#/components/parameters/ItemId'
       responses:
         '200':
           description: 实物列表
@@ -156,39 +777,121 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/ItemUnit' }
+                items:
+                  $ref: '#/components/schemas/ItemUnit'
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: 资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - sessionCookie: []
     post:
-      summary: 增加实物编号（管理员）
+      summary: 旧版手工实物编号接口（兼容保留；管理页面使用库存数量接口自动编号）
       operationId: createItemUnit
       parameters:
-        - $ref: '#/components/parameters/ItemId'
+      - $ref: '#/components/parameters/ItemId'
+      - name: Idempotency-Key
+        in: header
+        schema:
+          type: string
+          maxLength: 200
+        description: 可选；不提供时仍由物品内编号唯一约束防重复
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [unitCode]
+              required:
+              - unitCode
               properties:
-                unitCode: { type: string, example: CAM-2026-001 }
+                unitCode:
+                  type: string
+                  example: CAM-2026-001
+                  maxLength: 40
+                  minLength: 1
+                  description: 修剪首尾空白，同一物品内唯一；重复返回400 VALIDATION_ERROR
       responses:
         '201':
           description: 创建成功
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ItemUnit' }
-        '400': { $ref: '#/components/responses/ValidationError' }
-        '404': { $ref: '#/components/responses/NotFound' }
+              schema:
+                $ref: '#/components/schemas/ItemUnit'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - sessionCookie: []
   /items/{itemId}/units/{unitId}:
     patch:
       summary: 维护实物状态（管理员）；不得覆盖未归还记录
       operationId: updateItemUnit
       parameters:
-        - $ref: '#/components/parameters/ItemId'
-        - name: unitId
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
+      - $ref: '#/components/parameters/ItemId'
+      - name: unitId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
       requestBody:
         required: true
         content:
@@ -196,34 +899,349 @@ paths:
             schema:
               type: object
               properties:
-                status: { $ref: '#/components/schemas/UnitStatus' }
+                status:
+                  $ref: '#/components/schemas/UnitStatus'
       responses:
         '200':
           description: 更新后的实物
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ItemUnit' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/InvalidState' }
+              schema:
+                $ref: '#/components/schemas/ItemUnit'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      description: 已借出和待核验时返回409 INVALID_STATE，不能用管理维护接口直接恢复可借。
+      security:
+      - sessionCookie: []
+  /spaces:
+    get:
+      summary: 可预约地点列表（公开）
+      operationId: listSpaces
+      responses:
+        '200':
+          description: 预置两间会议室，管理端可新增其他地点
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Space'
+    post:
+      summary: 管理员新增可预约地点
+      operationId: createSpace
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpaceInput'
+      responses:
+        '201':
+          description: 新增成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Space'
+        '403':
+          description: 无地点管理权限
+  /spaces/{spaceId}/slots:
+    get:
+      summary: 指定地点的单日整点占用表（公开）
+      operationId: spaceSlots
+      parameters:
+      - name: spaceId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: date
+        in: query
+        required: true
+        schema: { type: string, format: date }
+      responses:
+        '200':
+          description: 只返回小时和占用状态，不泄露申请人资料
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SpaceSlot'
+        '400':
+          description: 时间范围无效
+        '401':
+          description: 未登录
+        '404':
+          description: 地点不存在
+  /spaces/{spaceId}/image:
+    get:
+      summary: 公开读取地点照片
+      operationId: getSpaceImage
+      parameters:
+      - name: spaceId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: JPG 或 PNG 照片
+          content:
+            image/jpeg: {}
+            image/png: {}
+        '404':
+          description: 照片不存在
+    post:
+      summary: 管理员上传或更换地点照片
+      operationId: uploadSpaceImage
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: spaceId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: 上传成功，返回更新后的地点
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Space'
+  /review/reservations:
+    get:
+      summary: 审核员查看贵重物品和地点待审申请
+      operationId: pendingItemReviews
+      parameters:
+      - name: page
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+      - name: size
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 按服务端提交顺序返回待审申请；本人申请可见但不可自审
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemReservationPage'
+        '401':
+          description: 未登录
+        '403':
+          description: 没有审核权限
+      security:
+      - sessionCookie: []
+  /reservations/{reservationId}/review:
+    patch:
+      summary: 审核员单人同意或拒绝贵重物品申请
+      operationId: reviewItemReservation
+      parameters:
+      - name: reservationId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [APPROVE, REJECT] }
+                reason: { type: string, maxLength: 300 }
+      responses:
+        '200':
+          description: 审核结果及预约最新状态；同意时在事务中再次检查时段容量
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemReservation'
+        '400':
+          description: 决定或理由无效
+        '401':
+          description: 未登录
+        '403':
+          description: 无审核权限
+        '409':
+          description: 禁止自审、已处理、较早重叠申请待审或时段库存冲突
+      security:
+      - sessionCookie: []
+  /me/reservations:
+    get:
+      summary: 查看当前用户的物品与地点预约
+      operationId: listMyReservations
+      parameters:
+      - name: page
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+      - name: size
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 仅返回当前登录人的预约
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemReservationPage'
+        '401':
+          description: 未登录
+        '400':
+          description: 页码或页大小无效
+      security:
+      - sessionCookie: []
+  /me/reservations/{reservationId}:
+    delete:
+      summary: 申请人取消尚未开始的预约
+      operationId: cancelMyReservation
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: reservationId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: 返回状态为 CANCELLED 的预约
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemReservation'
+        '403':
+          description: 不是申请人
+        '409':
+          description: 已开始、已处理或已取消
+  /management/reservations:
+    get:
+      summary: 管理端查询物品与地点预约日志
+      operationId: managementReservationLog
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: itemId
+        in: query
+        schema: { type: integer, format: int64 }
+      - name: page
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+      - name: size
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 含申请人、资源、提交及使用时间、用途和状态的分页记录
+        '403':
+          description: 无管理权限
   /reservations:
+    post:
+      summary: 提交物品或地点预约
+      operationId: createItemReservation
+      description: 普通物品在事务锁定物品后校验同一时段库存并确认；贵重物品和地点进入待审核。地点只接受未来一周内同一天 08:00–22:00 的整点时段。重复请求使用相同 Idempotency-Key 返回原预约。
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: { type: string, minLength: 8, maxLength: 100 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateItemReservation'
+      responses:
+        '201':
+          description: 预约已创建或同键重试返回原预约
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemReservation'
+        '400':
+          description: 时间、用途、数量或请求格式无效
+        '401':
+          description: 未登录
+        '404':
+          description: 物品不存在或已停用
+        '409':
+          description: 时段库存冲突、规则未配置或防重复键冲突
+      security:
+      - sessionCookie: []
     get:
       summary: 管理端筛选预约（须按管理范围授权）
       operationId: listReservations
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [PENDING_APPROVAL, WAITLISTED, CONFIRMED, REJECTED, CANCELLED, EXPIRED, OVERRIDDEN, RETURN_SUBMITTED, RETURN_REJECTED, COMPLETED]
-        - name: resourceType
-          in: query
-          schema: { type: string, enum: [ITEM, ROOM] }
-        - name: page
-          in: query
-          schema: { type: integer, default: 1 }
-        - name: size
-          in: query
-          schema: { type: integer, default: 20 }
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - PENDING_APPROVAL
+          - WAITLISTED
+          - CONFIRMED
+          - REJECTED
+          - CANCELLED
+          - EXPIRED
+          - OVERRIDDEN
+          - RETURN_SUBMITTED
+          - RETURN_REJECTED
+          - COMPLETED
+      - name: resourceType
+        in: query
+        schema:
+          type: string
+          enum:
+          - ITEM
+          - SPACE
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: size
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
       responses:
         '200':
           description: 预约列表；status=RETURN_SUBMITTED 时为归还核验队列
@@ -231,25 +1249,66 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/ReturnSubmission' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+                items:
+                  $ref: '#/components/schemas/ReturnSubmission'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: 资源不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: 状态冲突或幂等键内容冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      description: 本模块只处理status=RETURN_SUBMITTED；需要ReservationReturnGateway提供真实预约和归还绑定。未接入时返回503，其他预约查询由预约模块实现。
+      security:
+      - sessionCookie: []
   /reservations/{reservationId}/return-verification:
     post:
       summary: 管理员核验归还；接受后实物重新可借，驳回须写原因
       operationId: submitReturnVerification
       parameters:
-        - name: reservationId
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
-        - name: Idempotency-Key
-          in: header
-          schema: { type: string }
+      - name: reservationId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: Idempotency-Key
+        in: header
+        schema:
+          type: string
+          maxLength: 200
+        required: true
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ReturnVerificationInput' }
+            schema:
+              $ref: '#/components/schemas/ReturnVerificationInput'
       responses:
         '200':
           description: 核验结果
@@ -257,106 +1316,217 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [id, status]
+                required:
+                - id
+                - status
                 properties:
-                  id: { type: integer, format: int64 }
-                  status: { type: string, enum: [COMPLETED, RETURN_REJECTED] }
-        '400': { $ref: '#/components/responses/ValidationError' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/InvalidState' }
-
-  /auth/login:
-    post:
-      summary: 管理员账号密码登录，返回令牌与本人资料
-      operationId: login
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/LoginInput' }
-      responses:
-        '200':
-          description: 登录成功
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/LoginResult' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-
-  /users:
-    get:
-      summary: 用户列表；管理端可按单个角色筛选
-      operationId: listUsers
-      parameters:
-        - name: role
-          in: query
-          schema: { $ref: '#/components/schemas/UserRole' }
-          description: 用户可同时具有多个角色，命中该角色即返回
-      responses:
-        '200':
-          description: 用户列表
+                  id:
+                    type: integer
+                    format: int64
+                  status:
+                    type: string
+                    enum:
+                    - COMPLETED
+                    - RETURN_REJECTED
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '401':
+          description: 未登录
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/AdminProfile' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-
-  /users/me:
-    get:
-      summary: 当前登录人资料
-      operationId: getMyProfile
-      responses:
-        '200':
-          description: 本人资料
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/AdminProfile' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-    patch:
-      summary: 修改本人资料（姓名、邮箱、手机号；账号与角色不可改）
-      operationId: updateMyProfile
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ProfileUpdateInput' }
-      responses:
-        '200':
-          description: 更新后的资料
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/AdminProfile' }
-        '400': { $ref: '#/components/responses/ValidationError' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-
-  /users/me/password:
-    post:
-      summary: 修改本人密码；成功后旧会话失效，需重新登录
-      operationId: changeMyPassword
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PasswordChangeInput' }
-      responses:
-        '200':
-          description: 修改成功
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: 无管理范围权限
           content:
             application/json:
               schema:
-                type: object
-                required: [changed]
-                properties:
-                  changed: { type: boolean, example: true }
-        '400': { $ref: '#/components/responses/ValidationError' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: 数据库不可用或依赖尚未接入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      description: 使用同一数据库事务锁定预约和物品，记录核验和审计；接受后恢复实物，驳回保持占用。真实预约适配器缺失时返回503 DEPENDENCY_UNAVAILABLE。
+      security:
+      - sessionCookie: []
 components:
   schemas:
+    Space:
+      type: object
+      required: [id, name, description, capacity, status]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        description: { type: string }
+        capacity: { type: integer, minimum: 1 }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        imageUrl: { type: string, nullable: true }
+    SpaceInput:
+      type: object
+      required: [name, capacity]
+      properties:
+        name: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+        capacity: { type: integer, minimum: 1, maximum: 1000 }
+    SpaceSlot:
+      type: object
+      required: [hour, status]
+      properties:
+        hour: { type: integer, minimum: 8, maximum: 21 }
+        status: { type: string, enum: [CONFIRMED, PENDING_APPROVAL] }
+    ApprovalQueueEntry:
+      type: object
+      required: [reservationId, resourceType, resourceId, startAt, endAt, purpose, submittedAt]
+      properties:
+        reservationId: { type: integer, format: int64 }
+        resourceType: { type: string, enum: [ITEM, SPACE] }
+        resourceId: { type: integer, format: int64 }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        purpose: { type: string }
+        submittedAt: { type: string, format: date-time }
+    CreateItemReservation:
+      type: object
+      required: [resourceType, resourceId, startAt, endAt, purpose]
+      properties:
+        resourceType:
+          type: string
+          enum: [ITEM, SPACE]
+        resourceId:
+          type: integer
+          format: int64
+        startAt:
+          type: string
+          format: date-time
+          description: 带时区的 ISO 8601 整点时间；时段采用 [startAt,endAt)。物品可跨天，地点限同一天。
+        endAt:
+          type: string
+          format: date-time
+        purpose:
+          type: string
+          maxLength: 300
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 1
+    ItemReservation:
+      type: object
+      required: [id, resourceType, resourceId, applicantId, itemName, startAt, endAt,
+        purpose, quantity, status, submissionSeq, submittedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        resourceType: { type: string, enum: [ITEM] }
+        resourceId: { type: integer, format: int64 }
+        applicantId: { type: integer, format: int64 }
+        itemName: { type: string }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        purpose: { type: string }
+        quantity: { type: integer }
+        status: { type: string, enum: [CONFIRMED, PENDING_APPROVAL, REJECTED, CANCELLED, EXPIRED] }
+        submissionSeq: { type: integer, format: int64 }
+        submittedAt: { type: string, format: date-time }
+    ItemReservationPage:
+      type: object
+      required: [content, page, size, totalElements]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemReservation'
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
+    CsrfToken:
+      type: object
+      required: [token, headerName]
+      properties:
+        token:
+          type: string
+        headerName:
+          type: string
+          example: X-CSRF-TOKEN
+    LoginRequest:
+      type: object
+      required: [loginName, password]
+      properties:
+        loginName:
+          type: string
+          example: demo.admin
+        password:
+          type: string
+          format: password
+    NewUser:
+      type: object
+      required: [loginName, displayName, password]
+      properties:
+        loginName:
+          type: string
+          example: student01
+        displayName:
+          type: string
+          example: 测试用户
+        password:
+          type: string
+          format: password
+          minLength: 12
+    Grant:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [COUNSELOR_ADMIN, RESOURCE_MANAGER, SYSTEM_ADMIN]
+        locationId:
+          type: integer
+          format: int64
+          nullable: true
+          description: RESOURCE_MANAGER 必填，其他角色不得填写
+    GrantUpdate:
+      type: object
+      required: [grants, reviewer]
+      properties:
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Grant'
+        reviewer:
+          type: boolean
+          description: 是否属于可变更的审核小组
+    UserProfile:
+      type: object
+      required: [id, loginName, displayName, status, grants, reviewer]
+      properties:
+        id:
+          type: integer
+          format: int64
+        loginName:
+          type: string
+        displayName:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, DISABLED]
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Grant'
+        reviewer:
+          type: boolean
     ApiError:
       type: object
-      required: [code, message, details, requestId]
+      required:
+      - code
+      - message
+      - details
+      - requestId
       properties:
         code:
           type: string
@@ -372,14 +1542,19 @@ components:
           description: 便于在服务端日志中定位本次请求
     Health:
       type: object
-      required: [status]
+      required:
+      - status
       properties:
         status:
           type: string
           example: UP
     Location:
       type: object
-      required: [id, name, type, status]
+      required:
+      - id
+      - name
+      - type
+      - status
       properties:
         id:
           type: integer
@@ -390,205 +1565,423 @@ components:
           example: 办公室 A
         type:
           type: string
-          enum: [OFFICE, STORAGE]
+          enum:
+          - OFFICE
+          - STORAGE
         status:
           type: string
-          enum: [ACTIVE, INACTIVE]
+          enum:
+          - ACTIVE
+          - INACTIVE
     ItemRules:
       type: object
-      description: 可借规则随物品保存，不写死为常量
+      description: 输入中提供的规则必须为整数，maxBorrowDays>=1，advanceDays>=0；省略时无默认业务值。
       properties:
         maxBorrowDays:
           type: integer
           minimum: 1
           example: 7
           description: 单次最长借用天数
+          maximum: 2147483647
         advanceDays:
           type: integer
           minimum: 0
           example: 14
           description: 可提前预约天数
+          maximum: 2147483647
     ItemInput:
       type: object
-      required: [name, locationId, isValuable, status]
+      required:
+      - name
+      - locationId
       properties:
-        name: { type: string, maxLength: 50, example: 佳能相机 EOS R50 }
-        locationId: { type: integer, format: int64, example: 2 }
-        description: { type: string, maxLength: 300, example: 含 18-45mm 套头、两块电池与相机包。 }
+        name:
+          type: string
+          maxLength: 50
+          example: 佳能相机 EOS R50
+        locationId:
+          type: integer
+          format: int64
+          example: 2
+          minimum: 1
+        initialStock:
+          type: integer
+          minimum: 0
+          maximum: 500
+          default: 0
+          description: 创建物品时一并生成的实物数量；编号由服务端自动分配
+        description:
+          type: string
+          maxLength: 300
+          example: 含 18-45mm 套头、两块电池与相机包。
         isValuable:
           type: boolean
           default: false
           description: 贵重物品的预约必须经审核员审批
         status:
           type: string
-          enum: [ACTIVE, INACTIVE]
+          enum:
+          - ACTIVE
+          - INACTIVE
           default: ACTIVE
-        rules: { $ref: '#/components/schemas/ItemRules' }
+        rules:
+          $ref: '#/components/schemas/ItemRules'
+      additionalProperties: false
     UnitSummary:
       type: object
-      required: [total, available]
+      required:
+      - total
+      - available
       properties:
-        total: { type: integer, example: 2 }
-        available: { type: integer, example: 1 }
+        total:
+          type: integer
+          example: 2
+          minimum: 0
+        available:
+          type: integer
+          example: 1
+          minimum: 0
+      description: 后端计算的当前实物摘要，available只计AVAILABLE；不代表预约时段可用量。
     Item:
-      allOf:
-        - $ref: '#/components/schemas/ItemInput'
-        - type: object
-          required: [id, createdAt]
-          properties:
-            id: { type: integer, format: int64, example: 1 }
-            createdAt: { type: string, format: date-time }
-            unitSummary:
-              $ref: '#/components/schemas/UnitSummary'
-              description: 仅列表接口返回
+      type: object
+      required:
+      - name
+      - locationId
+      - description
+      - isValuable
+      - status
+      - rules
+      - id
+      - createdAt
+      - unitSummary
+      - images
+      properties:
+        name:
+          type: string
+          maxLength: 50
+          example: 佳能相机 EOS R50
+        locationId:
+          type: integer
+          format: int64
+          example: 2
+          minimum: 1
+        description:
+          type: string
+          maxLength: 300
+          example: 含 18-45mm 套头、两块电池与相机包。
+        isValuable:
+          type: boolean
+          default: false
+          description: 贵重物品的预约必须经审核员审批
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - INACTIVE
+          default: ACTIVE
+        rules:
+          $ref: '#/components/schemas/ItemRulesResponse'
+        id:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+        unitSummary:
+          $ref: '#/components/schemas/UnitSummary'
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemImage'
     ItemImage:
       type: object
-      required: [id, itemId]
+      required:
+      - id
+      - itemId
+      - fileName
+      - url
       properties:
-        id: { type: integer, format: int64, example: 1 }
-        itemId: { type: integer, format: int64, example: 1 }
-        fileName: { type: string, example: 机身正面.jpg }
+        id:
+          type: integer
+          format: int64
+          example: 1
+        itemId:
+          type: integer
+          format: int64
+          example: 1
+        fileName:
+          type: string
+          example: 机身正面.jpg
+        url:
+          type: string
+          description: 公开上架物品可匿名读取的相对地址；停用物品需管理权限；不含内部存储键
     UnitStatus:
       type: string
-      enum: [AVAILABLE, MAINTENANCE, DISABLED, LOST]
+      enum:
+      - AVAILABLE
+      - MAINTENANCE
+      - DISABLED
+      - LOST
       description: 可借 / 维修中 / 停用 / 遗失
     ItemUnit:
       type: object
-      required: [id, itemId, unitCode, status]
+      required:
+      - id
+      - itemId
+      - unitCode
+      - status
       properties:
-        id: { type: integer, format: int64, example: 1 }
-        itemId: { type: integer, format: int64, example: 1 }
-        unitCode: { type: string, example: CAM-2026-001 }
-        status: { $ref: '#/components/schemas/UnitStatus' }
+        id:
+          type: integer
+          format: int64
+          example: 1
+        itemId:
+          type: integer
+          format: int64
+          example: 1
+        unitCode:
+          type: string
+          example: CAM-2026-001
+          maxLength: 40
+          minLength: 1
+          description: 修剪首尾空白，同一物品内唯一；重复返回400 VALIDATION_ERROR
+        status:
+          $ref: '#/components/schemas/UnitState'
     ReturnPhoto:
       type: object
-      required: [id, fileName]
+      required:
+      - id
+      - fileName
       properties:
-        id: { type: integer, format: int64 }
-        fileName: { type: string, example: 机身正面.jpg }
+        id:
+          type: integer
+          format: int64
+        fileName:
+          type: string
+          example: 机身正面.jpg
         url:
           type: string
           description: 受权限控制的图片地址，联调阶段由后端提供
     ReturnSubmission:
       type: object
       description: 归还核验队列条目（status=RETURN_SUBMITTED 的预约视图）
-      required: [id, itemId, itemName, unitCode, borrower, submittedAt, photos, status]
+      required:
+      - id
+      - itemId
+      - itemName
+      - unitCode
+      - borrower
+      - submittedAt
+      - photos
+      - status
       properties:
-        id: { type: integer, format: int64, example: 501 }
-        itemId: { type: integer, format: int64, example: 1 }
-        itemName: { type: string, example: 佳能相机 EOS R50 }
-        unitCode: { type: string, example: CAM-2026-001 }
-        borrower: { type: string, example: 王同学 }
-        submittedAt: { type: string, format: date-time }
-        remark: { type: string, example: 镜头盖有一道划痕。 }
+        id:
+          type: integer
+          format: int64
+          example: 501
+        itemId:
+          type: integer
+          format: int64
+          example: 1
+        itemName:
+          type: string
+          example: 佳能相机 EOS R50
+        unitCode:
+          type: string
+          example: CAM-2026-001
+        borrower:
+          type: string
+          example: 王同学
+        submittedAt:
+          type: string
+          format: date-time
+        remark:
+          type: string
+          example: 镜头盖有一道划痕。
         photos:
           type: array
           minItems: 1
-          items: { $ref: '#/components/schemas/ReturnPhoto' }
-        status: { type: string, enum: [RETURN_SUBMITTED] }
+          items:
+            $ref: '#/components/schemas/ReturnPhoto'
+        status:
+          type: string
+          enum:
+          - RETURN_SUBMITTED
     ReturnVerificationInput:
       type: object
-      required: [decision]
+      required:
+      - decision
       properties:
-        decision: { type: string, enum: [ACCEPT, REJECT] }
+        decision:
+          type: string
+          enum:
+          - ACCEPT
+          - REJECT
         reason:
           type: string
           maxLength: 200
           description: 驳回（REJECT）时必填；接受后可备注
-    LoginInput:
+    ItemPage:
       type: object
-      required: [account, password]
+      required:
+      - content
+      - page
+      - size
+      - totalElements
       properties:
-        account: { type: string, maxLength: 50 }
-        password: { type: string, format: password, maxLength: 100 }
-    LoginResult:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/Item'
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 1
+          maximum: 100
+        totalElements:
+          type: integer
+          format: int64
+          minimum: 0
+    ItemPatch:
       type: object
-      required: [token, user]
       properties:
-        token:
+        stockQuantity:
+          type: integer
+          minimum: 0
+          maximum: 500
+          description: 与物品属性在同一事务中保存；新增实物自动编号，减少库存须无占用预约且仅移除可用实物。
+        name:
           type: string
-          description: '会话令牌；后续请求通过 Authorization: Bearer 携带'
-        user: { $ref: '#/components/schemas/AdminProfile' }
+          maxLength: 50
+          example: 佳能相机 EOS R50
+        locationId:
+          type: integer
+          format: int64
+          example: 2
+        description:
+          type: string
+          maxLength: 300
+          example: 含 18-45mm 套头、两块电池与相机包。
+        isValuable:
+          type: boolean
+          default: false
+          description: 贵重物品的预约必须经审核员审批
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - INACTIVE
+          default: ACTIVE
+        rules:
+          $ref: '#/components/schemas/ItemRules'
+      additionalProperties: false
+    ItemRulesResponse:
+      type: object
+      description: null表示未配置，不能理解为无限制。旧的非整天小时规则保留在数据库，需显式复核配置。
+      properties:
+        maxBorrowDays:
+          type: integer
+          minimum: 1
+          example: 7
+          description: 单次最长借用天数
+          maximum: 2147483647
+          nullable: true
+        advanceDays:
+          type: integer
+          minimum: 0
+          example: 14
+          description: 可提前预约天数
+          maximum: 2147483647
+          nullable: true
+    UnitState:
+      type: string
+      enum:
+      - AVAILABLE
+      - MAINTENANCE
+      - DISABLED
+      - LOST
+      - CHECKED_OUT
+      - RETURN_SUBMITTED
+      description: 前四项可由管理员维护；已借出和待核验仅由交接业务更新。
     UserRole:
       type: string
       description: 开发约束 2.2 定义的五种角色；管理权限与审核权限分开
-      enum: [USER, COUNSELOR_ADMIN, RESOURCE_MANAGER, REVIEWER, SYSTEM_ADMIN]
-    AdminProfile:
-      type: object
-      description: 角色与授权字段以 1 号（身份与权限接口）最终实现为准；业务审批须遵守禁止自审规则
-      required: [id, account, name, roles]
-      properties:
-        id: { type: integer, format: int64 }
-        account: { type: string, example: admin }
-        name: { type: string, example: 陈老师 }
-        roles:
-          type: array
-          items: { $ref: '#/components/schemas/UserRole' }
-          description: 一名用户可同时具有多种角色（如资源管理员兼任审核员）
-        resourceScopes:
-          type: array
-          items: { type: integer, format: int64 }
-          description: 授权可管理的地点 id 集合（按资源记录授权，不按姓名写代码）
-        department: { type: string, example: 学院办公室 }
-        email: { type: string, format: email }
-        phone: { type: string }
-        joinedAt: { type: string, format: date }
-        lastLoginAt: { type: string, format: date-time }
-    ProfileUpdateInput:
-      type: object
-      properties:
-        name: { type: string, maxLength: 50 }
-        email: { type: string, format: email, maxLength: 100 }
-        phone: { type: string, maxLength: 20 }
-    PasswordChangeInput:
-      type: object
-      required: [oldPassword, newPassword]
-      properties:
-        oldPassword: { type: string, format: password }
-        newPassword:
-          type: string
-          format: password
-          minLength: 8
-          maxLength: 100
-          description: 至少 8 位，需同时包含字母和数字
+      enum:
+      - USER
+      - COUNSELOR_ADMIN
+      - RESOURCE_MANAGER
+      - REVIEWER
+      - SYSTEM_ADMIN
   parameters:
     ItemId:
       name: itemId
       in: path
       required: true
-      schema: { type: integer, format: int64 }
+      schema:
+        type: integer
+        format: int64
   responses:
     ValidationError:
       description: 参数校验失败
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ApiError' }
+          schema:
+            $ref: '#/components/schemas/ApiError'
           example:
             code: VALIDATION_ERROR
             message: 物品名称不能为空
-            details: { name: 必填 }
+            details:
+              name: 必填
             requestId: 3f2b8f0e
     Unauthenticated:
       description: 未登录
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ApiError' }
-          example: { code: UNAUTHENTICATED, message: 请先登录, details: {}, requestId: 3f2b8f0e }
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: UNAUTHENTICATED
+            message: 请先登录
+            details: {}
+            requestId: 3f2b8f0e
     Forbidden:
       description: 无权限或超出授权范围
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ApiError' }
-          example: { code: FORBIDDEN, message: 没有该资源的管理权限, details: {}, requestId: 3f2b8f0e }
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: FORBIDDEN
+            message: 没有该资源的管理权限
+            details: {}
+            requestId: 3f2b8f0e
     NotFound:
       description: 资源不存在
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ApiError' }
-          example: { code: NOT_FOUND, message: 资源不存在, details: {}, requestId: 3f2b8f0e }
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: NOT_FOUND
+            message: 资源不存在
+            details: {}
+            requestId: 3f2b8f0e
     InvalidState:
       description: 状态不允许该操作（如实物流转中、已处理的核验）
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ApiError' }
-          example: { code: INVALID_STATE, message: 实物尚未归还，不能变更状态, details: {}, requestId: 3f2b8f0e }
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: INVALID_STATE
+            message: 实物尚未归还，不能变更状态
+            details: {}
+            requestId: 3f2b8f0e
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: JSESSIONID
+      description: 服务端会话 Cookie；所有写请求还需先获取并提交 CSRF 令牌。
