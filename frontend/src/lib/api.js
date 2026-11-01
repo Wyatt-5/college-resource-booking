@@ -71,6 +71,8 @@ const mockUnits = [
   { id: 2, itemId: 1, unitCode: 'CAM-2026-002', status: 'MAINTENANCE' },
   { id: 3, itemId: 2, unitCode: 'DRL-2026-001', status: 'AVAILABLE' },
 ]
+// 物品照片记录：上架页上传后与物品关联，用户端按 photoIds 统计展示
+const mockImages = []
 const mockReturns = [
   {
     id: 501,
@@ -118,9 +120,36 @@ async function parseResponse(response, fallbackMessage) {
 }
 
 // 登录令牌：真实模式下登录成功后写入，后续请求自动携带
+// 同步存 sessionStorage：刷新页面保持登录，关闭标签页即失效
+const SESSION_KEY = 'crb-admin-session'
+
 let authToken = null
 function authHeaders() {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {}
+}
+
+function saveSession(token, admin) {
+  authToken = token
+  currentAdmin = admin
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, admin: publicAdmin(admin) }))
+  } catch {
+    // 隐私模式等场景下存储不可用，退化为仅内存保持
+  }
+}
+
+function restoreSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY)
+    if (!raw) return
+    const { token, admin } = JSON.parse(raw)
+    if (token && admin) {
+      authToken = token
+      currentAdmin = admin
+    }
+  } catch {
+    sessionStorage.removeItem(SESSION_KEY)
+  }
 }
 
 function getJson(path) {
@@ -157,6 +186,11 @@ function unitSummary(itemId) {
   }
 }
 
+// 物品照片 id 列表（用户端卡片角标与库存页展示用）
+function photoIds(itemId) {
+  return mockImages.filter((image) => image.itemId === itemId).map((image) => image.id)
+}
+
 // ---- 上架（4 号页面：ItemCreateForm） ----
 
 export async function createItem(payload, { idempotencyKey } = {}) {
@@ -180,7 +214,9 @@ export async function uploadItemImage(itemId, file) {
   if (USE_MOCK_ITEMS) {
     await mockDelay(500)
     mockImageId += 1
-    return { id: mockImageId, itemId, fileName: file.name }
+    const image = { id: mockImageId, itemId, fileName: file.name }
+    mockImages.push(image)
+    return image
   }
   const formData = new FormData()
   formData.append('file', file)
@@ -195,6 +231,8 @@ export async function uploadItemImage(itemId, file) {
 export async function deleteItemImage(itemId, imageId) {
   if (USE_MOCK_ITEMS) {
     await mockDelay(200)
+    const index = mockImages.findIndex((image) => image.itemId === itemId && image.id === imageId)
+    if (index !== -1) mockImages.splice(index, 1)
     return { deleted: true }
   }
   const response = await fetch(`${API_BASE}/items/${itemId}/images/${imageId}`, {
@@ -229,9 +267,10 @@ export async function createItemUnit(itemId, unitCode) {
 // 用户端浏览：只看启用中的物品
 export async function getPublicItems() {
   if (USE_MOCK_ITEMS) {
+    await mockDelay()
     return mockItems
       .filter((item) => item.status === 'ACTIVE')
-      .map((item) => ({ ...item, unitSummary: unitSummary(item.id) }));
+      .map((item) => ({ ...item, unitSummary: unitSummary(item.id), photoIds: photoIds(item.id) }))
   }
   return getJson('/items?status=ACTIVE')
 }
@@ -239,7 +278,7 @@ export async function getPublicItems() {
 export async function getItems() {
   if (USE_MOCK_ITEMS) {
     await mockDelay()
-    return mockItems.map((item) => ({ ...item, unitSummary: unitSummary(item.id) }))
+    return mockItems.map((item) => ({ ...item, unitSummary: unitSummary(item.id), photoIds: photoIds(item.id) }))
   }
   return getJson('/items')
 }
@@ -332,6 +371,9 @@ function publicAdmin(admin) {
   return profile
 }
 
+// 模块加载时从 sessionStorage 恢复登录态（须在 currentAdmin 声明之后调用）
+restoreSession()
+
 export function getSessionAdmin() {
   return currentAdmin ? publicAdmin(currentAdmin) : null
 }
@@ -342,18 +384,22 @@ export async function loginAdmin(account, password) {
     const found = mockAdmins.find((admin) => admin.account === account && admin.password === password)
     if (!found) throw apiFailure('UNAUTHORIZED', '账号或密码不正确')
     found.lastLoginAt = new Date().toISOString()
-    currentAdmin = found
+    saveSession('mock-token', found)
     return { token: 'mock-token', user: publicAdmin(found) }
   }
   const data = await postJson('/auth/login', { account, password })
-  authToken = data.token
-  currentAdmin = data.user
+  saveSession(data.token, data.user)
   return data
 }
 
 export function logoutAdmin() {
   currentAdmin = null
   authToken = null
+  try {
+    sessionStorage.removeItem(SESSION_KEY)
+  } catch {
+    // 存储不可用时无需处理
+  }
 }
 
 export async function updateMyProfile(input) {
@@ -365,10 +411,11 @@ export async function updateMyProfile(input) {
       email: input.email?.trim() || currentAdmin.email,
       phone: input.phone?.trim() || currentAdmin.phone,
     })
+    saveSession(authToken || 'mock-token', currentAdmin)
     return publicAdmin(currentAdmin)
   }
   const data = await patchJson('/users/me', input)
-  currentAdmin = data
+  saveSession(authToken, data)
   return data
 }
 
@@ -385,10 +432,14 @@ export async function changeMyPassword({ oldPassword, newPassword }) {
   return postJson('/users/me/password', { oldPassword, newPassword })
 }
 
+// 具有任一管理类角色即视为管理员（普通 USER 不进名单）
+const ADMIN_ROLES = ['COUNSELOR_ADMIN', 'RESOURCE_MANAGER', 'REVIEWER', 'SYSTEM_ADMIN']
+
 export async function getAdminList() {
   if (USE_MOCK_ITEMS) {
     await mockDelay(250)
     return mockAdmins.map(publicAdmin)
   }
-  return getJson('/users')
+  const users = await getJson('/users')
+  return users.filter((user) => (user.roles || []).some((role) => ADMIN_ROLES.includes(role)))
 }
