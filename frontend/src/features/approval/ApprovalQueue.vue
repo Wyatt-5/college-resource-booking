@@ -4,17 +4,23 @@
       <div><p class="eyebrow">管理端 · 预约审核</p><h1>审核工作台</h1></div>
       <button class="refresh-button" type="button" :disabled="loading" @click="load">{{ loading ? '读取中…' : '刷新' }}</button>
     </div>
-    <p class="section-sub">这里显示贵重物品和地点预约的真实申请。每笔由一位审核员决定；申请人不能审核自己的申请。地点冲突时辅导员申请优先，同优先级按提交顺序处理。</p>
+    <p class="section-sub">这里显示贵重物品和地点预约的真实申请。辅导员和学生都可以提交，辅导员申请只排在前面作为提示，批给谁由审核员决定；申请人不能审核自己的申请。批准后系统会记录审核人和处理结论。</p>
     <p v-if="error" class="state-card error-card" role="alert">{{ error }}</p>
     <p v-else-if="loading" class="state-card" role="status">正在读取待审申请…</p>
     <p v-else-if="!requests.length" class="state-card">当前没有待审申请。</p>
     <div v-else class="reservation-list">
       <article v-for="request in requests" :key="request.id" class="item-card reservation-entry">
         <div>
-          <h3>{{ request.resourceType === 'SPACE' ? '地点' : '物品' }} · {{ request.itemName }} · #{{ request.id }}</h3>
-          <p>申请人 #{{ request.applicantId }} · {{ formatTime(request.startAt) }} 至 {{ formatTime(request.endAt) }}</p>
+          <h3>
+            {{ request.resourceType === 'SPACE' ? '地点' : '物品' }} · {{ request.itemName }}
+            <span v-if="request.priorityTier === 'COUNSELOR'" class="priority-badge">辅导员申请</span>
+          </h3>
+          <p>申请人 {{ request.applicantName || ('#' + request.applicantId) }} · {{ formatTime(request.startAt) }} 至 {{ formatTime(request.endAt) }}</p>
           <p v-if="request.resourceType === 'ITEM'">数量 {{ request.quantity }} · 用途：{{ request.purpose }}</p>
           <p v-else>用途：{{ request.purpose }}</p>
+          <p v-if="request.competingPending > 0" class="competing-hint">
+            同时段还有 {{ request.competingPending }} 个待审申请；批准本单后，其余申请会因时段已被占用而无法再批准。
+          </p>
           <label class="field"><span>拒绝原因</span><input v-model.trim="reasons[request.id]" maxlength="300" placeholder="拒绝时必填"></label>
         </div>
         <div class="approval-actions">
@@ -74,3 +80,8 @@ async function decide(request, decision) {
 }
 onMounted(load)
 </script>
+
+<style scoped>
+.priority-badge{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:999px;background:#f3e7ff;color:#5f3a8a;font-size:12px;font-weight:600;vertical-align:middle}
+.competing-hint{margin-top:6px;padding:8px 10px;border-radius:9px;background:#fff6e6;color:#8a5a17;font-size:13px;line-height:1.6}
+</style>

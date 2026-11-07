@@ -6,6 +6,7 @@ const rows=ref([]), page=ref(0), total=ref(0), error=ref(''), loading=ref(false)
 const size=20
 const fmt=value=>new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})
 const states={CONFIRMED:'已确认',PENDING_APPROVAL:'待审核',CANCELLED:'已取消',REJECTED:'已拒绝',EXPIRED:'已过期'}
+const decisions={APPROVED:'审核通过',REJECTED:'审核拒绝',AUTO_CONFIRMED:'系统自动确认'}
 async function load(){loading.value=true;error.value='';try{const data=await getBookingLogs({itemId:props.itemId,page:page.value,size});rows.value=data.content;total.value=data.totalElements}catch(e){error.value=e.message||'读取预约记录失败'}finally{loading.value=false}}
 watch(()=>props.itemId,()=>{page.value=0;load()})
 onMounted(load)
@@ -21,10 +22,16 @@ onMounted(load)
       <p>申请人：{{ row.applicantName }}（{{ row.loginName }}） · 申请于 {{ fmt(row.submittedAt) }}</p>
       <p>使用时间：{{ fmt(row.startAt) }} 至 {{ fmt(row.endAt) }} · {{ row.resourceType === 'ITEM' ? `数量 ${row.quantity} · ` : '' }}{{ states[row.status] || row.status }}</p>
       <p>用途：{{ row.purpose }}</p>
+      <p v-if="row.decision" class="decision-line">
+        处理结论：{{ decisions[row.decision] || row.decision }} ·
+        审核人：{{ row.reviewerName || '系统' }}
+        <template v-if="row.reviewedAt"> · {{ fmt(row.reviewedAt) }}</template>
+        <template v-if="row.decisionReason"> · 理由：{{ row.decisionReason }}</template>
+      </p>
     </article></div>
     <nav v-if="total>size" class="section-heading"><button class="refresh-button" :disabled="page===0" @click="page--;load()">上一页</button><span>共 {{ total }} 条 · 第 {{ page+1 }} 页</span><button class="refresh-button" :disabled="(page+1)*size>=total" @click="page++;load()">下一页</button></nav>
   </section>
 </template>
 <style scoped>
-.booking-log{margin-top:24px}.log-list{display:grid;gap:10px}.log-entry{border:1px solid #e6dff1;border-radius:12px;padding:14px 18px;background:#fff}.log-entry p{margin:6px 0 0;color:#736486;font-size:13px;line-height:1.5}.log-entry span{color:#87769b}
+.booking-log{margin-top:24px}.log-list{display:grid;gap:10px}.log-entry{border:1px solid #e6dff1;border-radius:12px;padding:14px 18px;background:#fff}.log-entry p{margin:6px 0 0;color:#736486;font-size:13px;line-height:1.5}.log-entry span{color:#87769b}.log-entry .decision-line{margin-top:10px;padding:8px 10px;border-radius:9px;background:#f5f0fb;color:#5c4378}
 </style>
