@@ -10,8 +10,9 @@ import java.util.List;
 public interface ReservationReturnGateway {
     ReturnRecord lock(long reservationId);
     List<ReturnRecord> queue(CatalogAccess.Actor actor,int page,int size);
-    void finish(long reservationId,String status,String actor,String reason);
+    void finish(long reservationId,String handoverStatus,String actor,String reason);
+    record ReturnPhoto(long id,String fileName,String url) {}
     record ReturnRecord(long id,long itemId,String itemName,long locationId,List<Long> unitIds,
-                        String unitCode,String borrower,Instant submittedAt,String remark,
-                        List<ItemImage> photos,String status) {}
+                        List<String> unitCodes,String borrower,Instant submittedAt,String remark,
+                        List<ReturnPhoto> photos,String handoverStatus) {}
 }

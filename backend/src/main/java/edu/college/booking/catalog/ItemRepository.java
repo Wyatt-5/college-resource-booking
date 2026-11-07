@@ -80,13 +80,23 @@ public class ItemRepository {
         return new ItemUnit(id,item,code,"AVAILABLE");
     }
     public int removableUnitCount(long item){
-        return db.queryForObject("SELECT count(*) FROM item_units WHERE item_id=:item AND status='AVAILABLE'",Map.of("item",item),Integer.class);
+        return db.queryForObject("""
+                SELECT count(*) FROM item_units u
+                WHERE u.item_id=:item AND u.status='AVAILABLE'
+                  AND NOT EXISTS(SELECT 1 FROM reservation_units ru WHERE ru.unit_id=u.id)
+                """,Map.of("item",item),Integer.class);
     }
     public boolean hasActiveReservations(long item){
-        return db.queryForObject("SELECT EXISTS(SELECT 1 FROM reservations WHERE item_id=:item AND status='CONFIRMED' AND end_at>CURRENT_TIMESTAMP)",Map.of("item",item),Boolean.class);
+        return db.queryForObject("SELECT EXISTS(SELECT 1 FROM reservations WHERE item_id=:item AND status='CONFIRMED' AND (handover_status IS NULL OR handover_status<>'COMPLETED') AND end_at>CURRENT_TIMESTAMP)",Map.of("item",item),Boolean.class);
     }
     public void removeNewestAvailableUnits(long item,int count){
-        db.update("DELETE FROM item_units WHERE id IN (SELECT id FROM item_units WHERE item_id=:item AND status='AVAILABLE' ORDER BY id DESC LIMIT :count)",Map.of("item",item,"count",count));
+        db.update("""
+                DELETE FROM item_units WHERE id IN (
+                    SELECT u.id FROM item_units u
+                    WHERE u.item_id=:item AND u.status='AVAILABLE'
+                      AND NOT EXISTS(SELECT 1 FROM reservation_units ru WHERE ru.unit_id=u.id)
+                    ORDER BY u.id DESC LIMIT :count)
+                """,Map.of("item",item,"count",count));
     }
     public ItemUnit updateUnit(ItemUnit unit,String state){
         db.update("UPDATE item_units SET status=:state WHERE id=:id",Map.of("state",state,"id",unit.id()));

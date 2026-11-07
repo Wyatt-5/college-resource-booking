@@ -25,13 +25,13 @@ class CatalogConcurrencyTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @MockitoBean CatalogScopeProvider scopes;
-    @Test void missingReservationAdapterIsExplicitlyUnavailable()throws Exception{
+    @Test void unknownReturnReservationIsNotFound()throws Exception{
         given(scopes.managesAllLocations("adapter-test")).willReturn(true);
         mvc.perform(post("/api/v1/reservations/9001/return-verification")
                 .with(user("adapter-test").roles("SYSTEM_ADMIN")).with(csrf())
                 .header("Idempotency-Key","adapter-test").contentType("application/json").content("{\"decision\":\"ACCEPT\"}"))
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isServiceUnavailable())
-            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("DEPENDENCY_UNAVAILABLE"));
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("NOT_FOUND"));
     }
     @Test void concurrentIdenticalRequestsCreateOneItemAndOneAuditEvent()throws Exception{
         String actor="concurrency-"+UUID.randomUUID(),key=UUID.randomUUID().toString();
