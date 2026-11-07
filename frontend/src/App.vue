@@ -155,8 +155,7 @@ onMounted(() => {
           <ItemsBrowse v-else-if="activeSection === 'bookAsUser'" workspace="admin" :current-user="adminUser" @login-requested="onLogout" />
           <SpaceManagement v-else-if="activeSection === 'spaceManage'" />
           <template v-else-if="activeSection === 'returnCheck'">
-            <ReturnVerification v-if="enableManagementDemo" />
-            <p v-else class="state-card">归还核验等待预约状态与权限模块接入，当前未开放。</p>
+            <ReturnVerification />
           </template>
           <AccountSettings v-else-if="activeSection === 'account'" @profile-changed="adminUser = $event" @password-changed="onLogout" />
           <UserProvision v-else-if="activeSection === 'userProvision' && adminUser?.roles?.includes('SYSTEM_ADMIN')" :current-user="adminUser" />

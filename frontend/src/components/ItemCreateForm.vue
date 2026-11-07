@@ -8,6 +8,7 @@ import {
   uploadItemImage,
   MANAGEMENT_DEMO,
 } from '../lib/api'
+import { createRequestKey } from '../lib/requestKey'
 
 const MAX_PHOTOS = 6
 const MAX_PHOTO_SIZE = 5 * 1024 * 1024
@@ -34,7 +35,7 @@ const submitting = ref(false)
 const submitError = ref('')
 const fieldErrors = ref({})
 // 防重复提交：一次表单会话一个 key，完成上架后重新生成
-const idempotencyKey = ref(crypto.randomUUID())
+const idempotencyKey = ref(createRequestKey())
 const finishMessage = ref('')
 
 const locations = ref([])
@@ -167,7 +168,7 @@ function resetAll() {
   form.value = emptyForm()
   createdItem.value = null
   images.value = []
-  idempotencyKey.value = crypto.randomUUID()
+  idempotencyKey.value = createRequestKey()
   emit('created')
 }
 

@@ -81,7 +81,7 @@ const mockReturns = [
     id: 501,
     itemId: 1,
     itemName: '佳能相机 EOS R50',
-    unitCode: 'CAM-2026-001',
+    unitCodes: ['CAM-2026-001'],
     borrower: '王同学',
     submittedAt: '2026-10-25T16:20:00+08:00',
     remark: '镜头盖有一道划痕，机身其他部位完好。',
@@ -91,7 +91,7 @@ const mockReturns = [
     id: 502,
     itemId: 2,
     itemName: '博世电钻 GSB 120',
-    unitCode: 'DRL-2026-001',
+    unitCodes: ['DRL-2026-001'],
     borrower: '刘同学',
     submittedAt: '2026-10-26T09:05:00+08:00',
     remark: '',
@@ -319,6 +319,21 @@ export const getPublicItems = (filters) => publicCatalog.list(filters)
 export const getPublicItem = (id) => publicCatalog.detail(id)
 export const getMyReservations = ({ page = 0, size = 20 } = {}) =>
   getJson(`/me/reservations?page=${page}&size=${size}`)
+export const pickupReservation = (reservationId, unitCodes, idempotencyKey) =>
+  postJson(`/reservations/${reservationId}/pickup`, { unitCodes }, idempotencyKey)
+export async function submitReturnSubmission(reservationId, { photos, remark }, idempotencyKey) {
+  const body = new FormData()
+  for (const photo of photos) body.append('photos', photo)
+  if (remark?.trim()) body.append('remark', remark.trim())
+  const csrf = await ensureCsrf()
+  const response = await fetch(`${API_BASE}/reservations/${reservationId}/return-submission`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}), ...authHeaders(), ...csrf },
+    credentials: 'same-origin',
+    body,
+  })
+  return parseResponse(response, '提交归还失败')
+}
 export async function cancelMyReservation(id) {
   const csrf = await ensureCsrf()
   return fetch(`${API_BASE}/me/reservations/${id}`, { method:'DELETE',
@@ -406,9 +421,9 @@ export async function updateItemUnit(itemId, unitId, patch) {
 export async function getReturnVerifications() {
   if (USE_MOCK_ITEMS) {
     await mockDelay()
-    return mockReturns.map((entry) => ({ ...entry, status: 'RETURN_SUBMITTED' }))
+    return mockReturns.map((entry) => ({ ...entry, handoverStatus: 'RETURN_SUBMITTED' }))
   }
-  return getJson('/reservations?status=RETURN_SUBMITTED')
+  return getJson('/reservations?handoverStatus=RETURN_SUBMITTED')
 }
 
 export async function submitReturnVerification(reservationId, { decision, reason }, { idempotencyKey } = {}) {
@@ -422,10 +437,12 @@ export async function submitReturnVerification(reservationId, { decision, reason
     const [submission] = mockReturns.splice(index, 1)
     if (decision === 'ACCEPT') {
       // 核验通过后实物重新可借
-      const unit = mockUnits.find((entry) => entry.unitCode === submission.unitCode)
-      if (unit) unit.status = 'AVAILABLE'
+      for (const code of submission.unitCodes) {
+        const unit = mockUnits.find((entry) => entry.unitCode === code)
+        if (unit) unit.status = 'AVAILABLE'
+      }
     }
-    return { id: submission.id, status: decision === 'ACCEPT' ? 'COMPLETED' : 'RETURN_REJECTED' }
+    return { id: submission.id, handoverStatus: decision === 'ACCEPT' ? 'COMPLETED' : 'RETURN_REJECTED' }
   }
   return postJson(`/reservations/${reservationId}/return-verification`, { decision, reason }, idempotencyKey)
 }

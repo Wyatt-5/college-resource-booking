@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createReservation, getItemAvailability } from '../../lib/api'
+import { createRequestKey } from '../../lib/requestKey'
 
 const props = defineProps({ item: { type: Object, required: true }, currentUser: { type: Object, default: null } })
 const emit = defineEmits(['login-requested', 'created'])
@@ -81,7 +82,7 @@ async function submit() {
   if (!Number.isInteger(quantity.value) || quantity.value < 1 || quantity.value > props.item.unitSummary.available) {
     errorMessage.value = '预约数量无效。'; return
   }
-  if (!requestKey) requestKey = crypto.randomUUID()
+  if (!requestKey) requestKey = createRequestKey()
   submitting.value = true; errorMessage.value = ''; successMessage.value = ''
   try {
     const reservation = await createReservation({ resourceType: 'ITEM', resourceId: props.item.id,
