@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createReservation, getSpaces, getSpaceSlots } from '../../lib/api'
+import { createRequestKey } from '../../lib/requestKey'
 import BookingModal from '../../components/BookingModal.vue'
 
 const props = defineProps({ currentUser: { type: Object, default: null } })
@@ -83,7 +84,7 @@ async function submit() {
   try {
     const result = await createReservation({ resourceType: 'SPACE', resourceId: selectedSpace.value.id,
       startAt: `${selectedDate.value}T${hourText(startHour.value)}:00+08:00`,
-      endAt: `${selectedDate.value}T${hourText(endHour.value)}:00+08:00`, purpose: purpose.value, quantity: 1 }, crypto.randomUUID())
+      endAt: `${selectedDate.value}T${hourText(endHour.value)}:00+08:00`, purpose: purpose.value, quantity: 1 }, createRequestKey())
     formMessage.value = `申请 #${result.id} 已提交，等待审核。可在“我的预约”查看状态。`
     purpose.value = ''
     await loadSlots()

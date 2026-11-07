@@ -5,4 +5,5 @@ import java.time.Instant;
 public record ItemReservation(
         long id, String resourceType, long resourceId, long applicantId, String itemName,
         Instant startAt, Instant endAt, String purpose, int quantity, String status,
+        String handoverStatus, String lastReturnReason,
         long submissionSeq, Instant submittedAt) {}

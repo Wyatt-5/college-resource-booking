@@ -91,7 +91,7 @@ public class ItemService {
         if(target<current){
             int remove=current-target;
             if(repo.removableUnitCount(itemId)<remove)
-                throw new CatalogException(HttpStatus.CONFLICT,"STOCK_IN_USE","已借出、维修或停用的实物不能通过库存数量删除；请先处理实物状态");
+                throw new CatalogException(HttpStatus.CONFLICT,"STOCK_IN_USE","已借出、维修、停用或已有借还记录的实物不能通过库存数量删除；请先处理实物状态");
             if(repo.hasActiveReservations(itemId))
                 throw new CatalogException(HttpStatus.CONFLICT,"STOCK_RESERVED","存在未结束的预约，请先处理预约再减少库存");
             repo.removeNewestAvailableUnits(itemId,remove);

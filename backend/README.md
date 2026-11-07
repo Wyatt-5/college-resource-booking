@@ -29,7 +29,7 @@ Mac/Linux：`cp .env.example .env`、`docker compose -f infra/compose.yaml up -d
 | `POST /api/v1/items` | 上架物品 | 可带 `initialStock`（0–500），同一事务生成库存和唯一编号 |
 | `PUT /api/v1/items/{id}/stock` | 物品和更新后的库存摘要 | 管理员设置库存总数；有未结束预约或实物非可借状态时可能拒绝减少 |
 
-首次启动时 Flyway 自动执行迁移。目前预置三间办公室和一间物资室，不预置物品。V3/V4 建立物品与图片，V5 建立账号、授权和全局审计，V6 建立物品预约，V7 建立可预约地点（预置两间会议室）与地点照片。普通物品预约在同一数据库事务中锁定物品并校验时段容量；贵重物品和地点申请由审核员处理。预约与审核均写入审计日志。用户取件/提交归还及真实归还核验适配器仍待开发。详见 [资源模型与物品接口说明](../docs/资源模型与物品接口说明.md)。
+首次启动时 Flyway 自动执行迁移。目前预置三间办公室和一间物资室，不预置物品。V3/V4 建立物品与图片，V5 建立账号、授权和全局审计，V6 建立物品预约，V7 建立可预约地点（预置两间会议室）与地点照片，V8 建立物品领取、归还材料、照片和幂等记录。普通物品预约在同一数据库事务中锁定物品并校验时段容量；贵重物品和地点申请由审核员处理。预约、审核和交接均写入审计日志。详见 [资源模型与物品接口说明](../docs/资源模型与物品接口说明.md)。
 
 ## 首次管理员与登录接口
 
@@ -41,6 +41,8 @@ Mac/Linux：`cp .env.example .env`、`docker compose -f infra/compose.yaml up -d
 贵重物品审核：系统管理员在网页“账号与权限”给其他账号设置审核员权限。审核员用 `GET /api/v1/review/reservations` 读取待审列表，用 `PATCH /api/v1/reservations/{id}/review` 提交 `{"decision":"APPROVE"}` 或 `{"decision":"REJECT","reason":"原因"}`。申请人不能自审；同一物品重叠时段按提交顺序先审较早申请；批准时重新检查时段库存；审核结果写审计日志。
 
 地点预约：`GET /api/v1/spaces` 公开列出可预约地点；有管理权限者可 `POST /api/v1/spaces` 新增地点，并通过 `POST /api/v1/spaces/{id}/image` 上传或替换 JPG/PNG 照片。照片可用 `GET /api/v1/spaces/{id}/image` 公开读取。`GET /api/v1/spaces/{id}/slots?date=YYYY-MM-DD` 返回该日每个已占用整点小时的状态。用户通过通用 `POST /api/v1/reservations` 提交 `resourceType=SPACE`、地点 ID、开始/结束时间、用途及 `Idempotency-Key`。只能申请未来一周内同一天 08:00–22:00 的整点时段，最晚在 22:00 结束。所有地点申请进入单人审核，申请人不可自审；同一时段辅导员优先，同优先级按提交顺序；批准时再次检查冲突。
+
+物品交接：已确认预约在使用时段内由申请人调用 `POST /api/v1/reservations/{id}/pickup`，JSON 为 `{"unitCodes":["实物编号"]}`，编号数量必须等于预约数量。归还调用 `POST /api/v1/reservations/{id}/return-submission`，使用 multipart 的 `photos`（1–6 张 JPG/PNG/WebP，单张不超过 5MB）和可选 `remark`。两个写接口都要带 `Idempotency-Key`。管理员用 `GET /api/v1/reservations?handoverStatus=RETURN_SUBMITTED` 查看权限范围内队列，并调用 `POST /api/v1/reservations/{id}/return-verification` 接受或驳回；接受后实物恢复 `AVAILABLE`，驳回原因返回申请人后可补拍重提。照片 `GET /api/v1/return-photos/{photoId}` 只允许申请人或有对应地点权限的管理员读取。
 
 浏览器先请求 `GET /api/v1/auth/csrf`，保存会话 Cookie，并在登录、退出和其他写请求中携带返回的 `headerName`/`token` 请求头。登录后继续使用同一会话 Cookie；无会话返回 401，越权返回 403。现有 Vue 管理登录页已接入这一会话协议。
 
