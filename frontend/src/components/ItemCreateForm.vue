@@ -281,7 +281,7 @@ onUnmounted(() => { for (const image of images.value) URL.revokeObjectURL(image.
       <!-- 已创建物品摘要 -->
       <div class="created-summary">
         <div>
-          <p class="eyebrow">已创建 · #{{ createdItem.id }}</p>
+          <p class="eyebrow">已创建</p>
           <h3>{{ createdItem.name }}</h3>
           <p>
             {{ locationName(createdItem.locationId) }} ·

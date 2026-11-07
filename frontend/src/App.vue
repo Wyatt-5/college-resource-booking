@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { getSessionAdmin, logoutAdmin, refreshAdminSession, MANAGEMENT_DEMO } from './lib/api'
 import AccountSettings from './components/AccountSettings.vue'
 import AdminLogin from './components/AdminLogin.vue'
@@ -80,6 +80,25 @@ async function onLogout() {
 onMounted(() => {
   if (!enableManagementDemo) refreshAdminSession().then((user) => { adminUser.value = user }).catch(() => { adminUser.value = null })
 })
+
+// 手机上主导航是一条横向滑动的标签栏：切换模块后把当前标签滑进可视范围，
+// 避免点了导航却看不到自己所在的页面。
+const navRef = ref(null)
+function keepActiveNavVisible() {
+  const nav = navRef.value
+  if (!nav || nav.scrollWidth <= nav.clientWidth + 1) return
+  const active = nav.querySelector('.nav-button.active')
+  if (!active) return
+  const navBox = nav.getBoundingClientRect()
+  const activeBox = active.getBoundingClientRect()
+  const margin = 14
+  if (activeBox.left < navBox.left + margin) {
+    nav.scrollLeft -= navBox.left + margin - activeBox.left
+  } else if (activeBox.right > navBox.right - margin) {
+    nav.scrollLeft += activeBox.right - navBox.right + margin
+  }
+}
+watch([activeSection, mode], () => nextTick(keepActiveNavVisible))
 </script>
 
 <template>
@@ -119,7 +138,7 @@ onMounted(() => {
     </header>
 
     <div class="layout" :class="`mode-${mode}`">
-      <nav class="side-nav" aria-label="主导航">
+      <nav ref="navRef" class="side-nav" aria-label="主导航">
         <p class="nav-caption">{{ groups[mode].caption }}</p>
         <button
           v-for="section in sections.filter((item) => item.group === mode && (item.key !== 'login' || !adminUser) && (item.key !== 'userProvision' || adminUser?.roles?.includes('SYSTEM_ADMIN')) && (item.group !== 'admin' || canManageItems || ['approval', 'bookAsUser'].includes(item.key)))"

@@ -105,7 +105,7 @@ const filters = reactive({ keyword: '', locationId: props.initialLocation ? Stri
 let listVersion = 0
 let detailVersion = 0
 let searchTimer
-function locationName(id) { return locations.value.find((loc) => loc.id === id)?.name || `地点 ${id}` }
+function locationName(id) { return locations.value.find((loc) => loc.id === id)?.name || '未标注存放地点' }
 function borrowLimit(item) { return item.rules.maxBorrowDays == null ? '最长借用时长尚未配置' : `单次最长 ${item.rules.maxBorrowDays} 天` }
 function advanceLimit(item) { return item.rules.advanceDays == null ? '提前预约规则尚未配置' : `最多提前 ${item.rules.advanceDays} 天预约` }
 async function loadLocations() {

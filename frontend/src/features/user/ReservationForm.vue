@@ -88,7 +88,8 @@ async function submit() {
       startAt: new Date(start).toISOString(), endAt: new Date(end).toISOString(),
       quantity: quantity.value, purpose: purpose.value }, requestKey)
     successMessage.value = reservation.status === 'CONFIRMED'
-      ? `预约 #${reservation.id} 已确认。` : `申请 #${reservation.id} 已提交，等待其他审核员处理。`
+      ? '预约已确认，可在“我的预约”查看时段与状态。'
+      : '预约申请已提交，等待其他审核员处理；可在“我的预约”查看进展。'
     emit('created', reservation)
     await loadAvailability()
   } catch (cause) { errorMessage.value = cause.message || '预约提交失败，请稍后重试。'; await loadAvailability() }
@@ -150,5 +151,20 @@ onUnmounted(() => { ++version })
 .item-booking input[type=date]{width:100%;min-height:48px;border:1px solid #d4c6ec;background:#fcfaff;color:#35254f;border-radius:9px;padding:10px 12px;font:inherit;box-sizing:border-box}
 .item-time-slot strong,.item-time-slot span{align-self:center}.item-time-slot span{justify-self:start}
 .item-booking{border-top:1px solid #e9e2f3;padding-top:10px}.booking-help{color:#81718e;font-size:13px;line-height:1.7}.calendar-toolbar{display:flex;gap:12px;align-items:end;margin:18px 0}.calendar-toolbar .field{flex:1;margin:0}.calendar-toolbar button{padding:12px 18px}.item-timetable{max-height:330px;overflow-y:auto;border:1px solid #e6dff0;border-radius:13px}.item-time-band{display:grid;grid-template-columns:90px repeat(2,minmax(0,1fr));gap:1px;background:#e9e2f3;border-bottom:1px solid #e9e2f3}.item-time-band:last-child{border:0}.time-band-label{background:#faf8fd;padding:12px;color:#625174;display:flex;flex-direction:column;justify-content:center;gap:4px;font-size:13px}.time-band-label small{color:#9686a5}.item-time-slot{border:0;background:#fff;color:#49365e;padding:12px;display:grid;grid-template-columns:1fr auto;gap:7px;text-align:left;cursor:pointer;min-height:70px}.item-time-slot strong{font-size:13px}.item-time-slot span{font-size:12px;background:#eee8f8;color:#63418e;padding:3px 8px;border-radius:20px}.item-time-slot small{font-size:11px;color:#8d799d;grid-column:1/-1}.item-time-slot.selected{background:#f1ebfa}.item-time-slot:disabled{cursor:not-allowed;color:#978ba5;background:#f7f5f9}.item-time-slot.occupied span{background:#e7e3ec;color:#83788f}.booking-fields{border:0;padding:0;margin:22px 0;min-width:0;display:grid;gap:16px}.booking-date-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}.booking-date-row .field{min-width:0;margin:0}.booking-date-row input{min-width:0;max-width:100%;box-sizing:border-box}
-@media(max-width:600px){.item-time-band{grid-template-columns:62px repeat(2,minmax(0,1fr))}.time-band-label{padding:7px;font-size:11px}.item-time-slot{grid-template-columns:1fr;padding:8px;gap:4px}.item-time-slot strong{font-size:11px}.item-time-slot span{justify-self:start}.booking-date-row{gap:10px;grid-template-columns:1.25fr 1fr}.calendar-toolbar{gap:8px}.calendar-toolbar button{padding:12px}}
+@media(max-width:600px){
+  /* 时间表不再自带滚动条，交给弹窗整体滚动；每格加高到便于手指点按 */
+  .item-timetable{max-height:none;overflow:visible;border-radius:12px}
+  .item-time-band{grid-template-columns:58px repeat(2,minmax(0,1fr))}
+  .time-band-label{padding:8px 6px;font-size:11px;gap:2px}
+  .item-time-slot{grid-template-columns:1fr;padding:9px 8px;gap:4px;min-height:64px}
+  .item-time-slot strong{font-size:12px}
+  .item-time-slot span{justify-self:start;font-size:11px}
+  .item-time-slot small{font-size:10px}
+  .booking-date-row{gap:10px;grid-template-columns:1.2fr 1fr}
+  .calendar-toolbar{gap:8px}
+  .calendar-toolbar button{padding:0 14px;min-width:44px;min-height:46px}
+  .item-booking input[type=date]{font-size:16px}
+  .booking-fields{gap:14px;margin:18px 0}
+  .item-booking .primary-button{width:100%}
+}
 </style>
