@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.sql.Timestamp;
 import java.util.Base64;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -65,8 +66,10 @@ class ItemHandoverDatabaseTest {
                     (applicant_id,resource_type,item_id,start_at,end_at,purpose,quantity,status,
                      handover_status,idempotency_key,payload_hash)
                 VALUES (?,'ITEM',?,?,?,'测试领取归还',1,'CONFIRMED','NOT_PICKED_UP',?,?) RETURNING id
-                """, Long.class, ownerId, itemId, Instant.now().minus(1, ChronoUnit.HOURS),
-                Instant.now().plus(1, ChronoUnit.HOURS), "create-" + suffix, "hash-" + suffix);
+                """, Long.class, ownerId, itemId,
+                Timestamp.from(Instant.now().minus(1, ChronoUnit.HOURS)),
+                Timestamp.from(Instant.now().plus(1, ChronoUnit.HOURS)),
+                "create-" + suffix, "hash-" + suffix);
     }
 
     @AfterEach
