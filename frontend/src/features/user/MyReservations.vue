@@ -11,13 +11,12 @@
     <p v-else-if="!reservations.length" class="state-card">你还没有提交预约。</p>
     <div v-else class="reservation-list">
       <article v-for="reservation in reservations" :key="reservation.id" class="item-card reservation-entry">
-        <div>
-          <h3>{{ reservation.resourceType === 'SPACE' ? '地点 · ' : '物品 · ' }}{{ reservation.itemName }}</h3>
-          <p>{{ formatTime(reservation.startAt) }} 至 {{ formatTime(reservation.endAt) }}</p>
+        <div class="reservation-entry-main">
+          <div class="reservation-entry-head"><h3>{{ reservation.resourceType === 'SPACE' ? '地点 · ' : '物品 · ' }}{{ reservation.itemName }}</h3><span :class="['status-badge', badgeClass(reservation.status)]">{{ displayStatus(reservation) }}</span></div>
+          <p class="reservation-time">{{ formatTime(reservation.startAt) }} 至 {{ formatTime(reservation.endAt) }}</p>
           <p>{{ reservation.resourceType === 'ITEM' ? `数量 ${reservation.quantity} · ` : '' }}{{ reservation.purpose }}</p>
           <p v-if="reservation.handoverStatus === 'RETURN_REJECTED'" class="rejection-reason">核验驳回：{{ reservation.lastReturnReason || '请补充照片后重新提交' }}</p>
         </div>
-        <span class="status-badge badge-normal">{{ displayStatus(reservation) }}</span>
         <div class="reservation-actions">
           <button class="refresh-button" type="button" @click="selected=reservation">查看详情</button>
           <button v-if="canPickup(reservation)" class="primary-button" type="button" @click="pickupTarget=reservation">确认领取</button>
@@ -26,7 +25,7 @@
         </div>
       </article>
     </div>
-    <BookingModal v-if="selected" :title="`预约 #${selected.id}`" @close="selected=null">
+    <BookingModal v-if="selected" :title="`预约详情 · ${selected.itemName}`" @close="selected=null">
       <dl class="reservation-detail">
         <dt>资源</dt><dd>{{ selected.itemName }}（{{ selected.resourceType==='SPACE'?'地点':'物品' }}）</dd>
         <dt>预约状态</dt><dd>{{ statusName(selected.status) }}</dd>
@@ -66,6 +65,7 @@ const formatTime = value => new Date(value).toLocaleString('zh-CN', { timeZone: 
 const canPickup = reservation => reservation.resourceType === 'ITEM' && reservation.status === 'CONFIRMED' && reservation.handoverStatus === 'NOT_PICKED_UP' && new Date(reservation.startAt) <= new Date() && new Date(reservation.endAt) > new Date()
 const canReturn = reservation => reservation.resourceType === 'ITEM' && ['CHECKED_OUT', 'RETURN_REJECTED'].includes(reservation.handoverStatus)
 const canCancel = reservation => ['CONFIRMED', 'PENDING_APPROVAL'].includes(reservation.status) && (!reservation.handoverStatus || reservation.handoverStatus === 'NOT_PICKED_UP') && new Date(reservation.startAt) > new Date()
+const badgeClass = status => ({ CONFIRMED: 'badge-ok', PENDING_APPROVAL: 'badge-pending', REJECTED: 'badge-reject', CANCELLED: 'badge-off', EXPIRED: 'badge-off' })[status] || 'badge-normal'
 
 async function load() {
   if (!props.currentUser) return
@@ -87,7 +87,28 @@ async function afterReturn() { returnTarget.value = null; banner.value = '归还
 watch(() => props.currentUser?.id, () => { reservations.value = []; page.value = 0; load() })
 onMounted(load)
 </script>
-
 <style scoped>
-.reservation-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.reservation-detail{display:grid;grid-template-columns:100px 1fr;gap:14px;margin:0}.reservation-detail dt{color:#81718f}.reservation-detail dd{margin:0;overflow-wrap:anywhere}.rejection-reason{color:#a53e31;font-weight:700}
+.rejection-reason{color:#a53e31;font-weight:700}
+/* 我的预约：标题与状态同一行，时间与用途分层，操作按钮独立成块，手机上整行可点 */
+.reservation-entry{flex-direction:column;align-items:stretch;gap:14px;padding:18px}
+.reservation-entry-main{display:flex;flex-direction:column;gap:6px;min-width:0}
+.reservation-entry-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.reservation-entry-head h3{margin:0;font-size:16px;line-height:1.45;overflow-wrap:anywhere}
+.reservation-entry-head .status-badge{flex:0 0 auto;margin-top:2px}
+.reservation-entry p{margin:0;color:#5d5478;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.reservation-entry .reservation-time{color:#776d94;font-size:12px}
+.reservation-actions{display:flex;gap:10px;flex-wrap:wrap}
+.reservation-actions button{flex:1 1 auto;min-width:118px}
+.cancel-button{border-color:#dda694;color:#a03d2a}
+.cancel-button:hover:not(:disabled){background:#fdf3ee}
+.reservation-detail{display:grid;grid-template-columns:110px 1fr;gap:12px 14px;margin:0}
+.reservation-detail dt{color:#81718f;font-size:13px}
+.reservation-detail dd{margin:0;font-size:14px;overflow-wrap:anywhere}
+@media(max-width:560px){
+  .reservation-entry{padding:16px}
+  .reservation-entry-head{flex-wrap:wrap}
+  .reservation-actions button{flex:1 1 100%}
+  .reservation-detail{grid-template-columns:1fr;gap:4px}
+  .reservation-detail dt{margin-top:9px}
+}
 </style>

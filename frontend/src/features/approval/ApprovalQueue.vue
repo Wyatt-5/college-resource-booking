@@ -15,7 +15,7 @@
             {{ request.resourceType === 'SPACE' ? '地点' : '物品' }} · {{ request.itemName }}
             <span v-if="request.priorityTier === 'COUNSELOR'" class="priority-badge">辅导员申请</span>
           </h3>
-          <p>申请人 {{ request.applicantName || ('#' + request.applicantId) }} · {{ formatTime(request.startAt) }} 至 {{ formatTime(request.endAt) }}</p>
+          <p>申请人 {{ request.applicantName || ('账号 ' + request.applicantId) }} · {{ formatTime(request.startAt) }} 至 {{ formatTime(request.endAt) }}</p>
           <p v-if="request.resourceType === 'ITEM'">数量 {{ request.quantity }} · 用途：{{ request.purpose }}</p>
           <p v-else>用途：{{ request.purpose }}</p>
           <p v-if="request.competingPending > 0" class="competing-hint">
@@ -73,7 +73,7 @@ async function decide(request, decision) {
   message.value = ''
   try {
     const saved = await reviewReservation(request.id, { decision, reason })
-    message.value = `申请 #${saved.id} 已${saved.status === 'CONFIRMED' ? '批准' : '拒绝'}。`
+    message.value = `申请已${saved.status === 'CONFIRMED' ? '批准' : '拒绝'}。`
     await load()
   } catch (cause) { error.value = cause.message || '审核失败，请刷新后重试。' }
   finally { savingId.value = null }

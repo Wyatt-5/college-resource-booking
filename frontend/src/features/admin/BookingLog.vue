@@ -18,7 +18,7 @@ onMounted(load)
     <p v-else-if="loading" class="card-hint">正在读取…</p>
     <p v-else-if="!rows.length" class="card-hint">暂无预约记录。</p>
     <div v-else class="log-list"><article v-for="row in rows" :key="row.id" class="log-entry">
-      <div><strong>{{ row.resourceName }}</strong><span> · {{ row.resourceType === 'SPACE' ? '地点' : '物品' }} #{{ row.id }}</span></div>
+      <div><strong>{{ row.resourceName }}</strong><span> · {{ row.resourceType === 'SPACE' ? '地点' : '物品' }}</span></div>
       <p>申请人：{{ row.applicantName }}（{{ row.loginName }}） · 申请于 {{ fmt(row.submittedAt) }}</p>
       <p>使用时间：{{ fmt(row.startAt) }} 至 {{ fmt(row.endAt) }} · {{ row.resourceType === 'ITEM' ? `数量 ${row.quantity} · ` : '' }}{{ states[row.status] || row.status }}</p>
       <p>用途：{{ row.purpose }}</p>

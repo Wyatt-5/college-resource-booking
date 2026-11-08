@@ -32,8 +32,15 @@ function backdrop(event) {
 </template>
 
 <style scoped>
-.booking-dialog{box-sizing:border-box;width:min(850px,calc(100vw - 32px));max-height:90dvh;margin:auto;padding:0;border:1px solid #e5def2;border-radius:22px;background:#fff;color:#2d2148;box-shadow:0 24px 90px #21143740;overflow:auto}
+.booking-dialog{box-sizing:border-box;width:min(850px,calc(100vw - 32px));max-height:90dvh;margin:auto;padding:0;border:1px solid #e5def2;border-radius:22px;background:#fff;color:#2d2148;box-shadow:0 24px 90px #21143740;overflow:auto;overscroll-behavior:contain}
 .booking-dialog::backdrop{background:#24173788;backdrop-filter:blur(3px)}
 .booking-dialog-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;background:#fff;padding:18px 26px;border-bottom:1px solid #eee8f5}.booking-dialog-head h2{margin:0;font-size:22px}.booking-dialog-body{padding:22px 26px}
-@media(max-width:600px){.booking-dialog{width:calc(100vw - 20px);max-height:94dvh;border-radius:16px}.booking-dialog-head{padding:14px 16px}.booking-dialog-head h2{font-size:19px}.booking-dialog-body{padding:16px}}
+/* 手机端把预约弹窗变成整屏面板：内容多时整页一起滚，不再出现弹窗里套时间表的两层滚动条 */
+@media(max-width:600px){
+  .booking-dialog{width:100%;max-width:none;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0;inset:0}
+  .booking-dialog-head{padding:calc(12px + env(safe-area-inset-top)) 16px 12px;gap:12px}
+  .booking-dialog-head h2{font-size:18px;line-height:1.35;overflow-wrap:anywhere}
+  .booking-dialog-head .refresh-button{flex:0 0 auto;min-height:40px;padding:8px 16px}
+  .booking-dialog-body{padding:16px 16px calc(24px + env(safe-area-inset-bottom))}
+}
 </style>

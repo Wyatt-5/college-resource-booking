@@ -82,10 +82,10 @@ async function submit() {
     .some((hour) => slotStatus(hour) === 'CONFIRMED')) { formMessage.value = '选择的时段包含已预约时间，请更换。'; return }
   saving.value = true; formMessage.value = ''
   try {
-    const result = await createReservation({ resourceType: 'SPACE', resourceId: selectedSpace.value.id,
+    await createReservation({ resourceType: 'SPACE', resourceId: selectedSpace.value.id,
       startAt: `${selectedDate.value}T${hourText(startHour.value)}:00+08:00`,
       endAt: `${selectedDate.value}T${hourText(endHour.value)}:00+08:00`, purpose: purpose.value, quantity: 1 }, createRequestKey())
-    formMessage.value = `申请 #${result.id} 已提交，等待审核。可在“我的预约”查看状态。`
+    formMessage.value = '地点预约申请已提交，等待审核。可在“我的预约”查看状态。'
     purpose.value = ''
     await loadSlots()
   } catch (cause) { formMessage.value = cause.message || '提交失败，请重试。' }
@@ -158,5 +158,18 @@ onMounted(loadSpaces)
 .space-hint{margin:12px 0 16px;line-height:1.6}.space-timetable{border:1px solid #eee8f5;border-radius:15px;overflow:hidden}.space-band{display:grid;grid-template-columns:110px repeat(2,minmax(0,1fr));gap:1px;background:#eee8f5;border-bottom:1px solid #eee8f5}.space-band:last-child{border-bottom:0}.space-band-label{background:#faf8fd;color:#77668d;display:flex;flex-direction:column;justify-content:center;padding:10px 16px}.space-band-label strong{color:#392852}
 .space-slot{border:0;background:#fff;min-height:69px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 18px;text-align:left;color:#47365d;cursor:pointer}.space-slot span{border-radius:99px;background:#f0eafa;color:#5a4382;padding:5px 9px;font-size:12px;white-space:nowrap}.space-slot.occupied,.space-slot:disabled{background:#f6f4f8;color:#9b94a7;cursor:not-allowed}.space-slot.occupied span{background:#e8e4ed;color:#7f778c}.space-slot.pending span{background:#fff1df;color:#9b642e}.space-slot.selected{background:#f1ebfa}
 .space-form{margin-top:24px;display:grid;gap:16px}.space-form .primary-button{justify-self:start}.space-form select{cursor:pointer}
-@media(max-width:700px){.space-calendar{grid-template-columns:repeat(8,72px)}.space-booking-head{display:block}.space-band{grid-template-columns:75px repeat(2,minmax(0,1fr))}.space-band-label{padding:8px;font-size:12px}.space-slot{display:grid;justify-content:start;padding:8px;min-height:73px;font-size:12px}.space-slot span{padding:3px 6px}.space-form .primary-button{width:100%}}
+/* 手机端：日期条改成两行四列，8 天全部直接可见，不用横向滑动找日期 */
+@media(max-width:700px){
+  .space-calendar{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;overflow-x:visible;padding:16px 0 6px}
+  .space-calendar button{min-height:66px}
+  .space-booking-head{display:block}
+  .space-booking-head>span{display:inline-block;margin-top:6px}
+  .space-band{grid-template-columns:70px repeat(2,minmax(0,1fr))}
+  .space-band-label{padding:8px;font-size:12px;gap:2px}
+  .space-slot{display:grid;justify-content:start;gap:5px;padding:9px 8px;min-height:64px;font-size:12px}
+  .space-slot strong{font-size:12px}
+  .space-slot span{justify-self:start;padding:3px 8px;font-size:11px}
+  .space-form .primary-button{width:100%}
+  .space-form select{font-size:16px;min-height:46px}
+}
 </style>
