@@ -1056,11 +1056,11 @@ paths:
         schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
       responses:
         '200':
-          description: 按服务端提交顺序返回待审申请；本人申请可见但不可自审
+          description: 辅导员申请排在最前仅作提示；同优先级按提交顺序。priorityTier 与 competingPending 供审核人判断，不构成批准限制。
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ItemReservationPage'
+                $ref: '#/components/schemas/PendingReservationPage'
         '401':
           description: 未登录
         '403':
@@ -1069,7 +1069,8 @@ paths:
       - sessionCookie: []
   /reservations/{reservationId}/review:
     patch:
-      summary: 审核员单人同意或拒绝贵重物品申请
+      summary: 审核员单人同意或拒绝贵重物品/地点申请
+      description: 辅导员优先只影响待审队列排序，不阻止审核员批准学生申请；批准时仅校验该时段是否已被确认占用。审核人与处理结论写入预约记录并在管理端日志可查。
       operationId: reviewItemReservation
       parameters:
       - name: reservationId
@@ -1100,7 +1101,7 @@ paths:
         '403':
           description: 无审核权限
         '409':
-          description: 禁止自审、已处理、较早重叠申请待审或时段库存冲突
+          description: 禁止自审、已被其他审核员处理或该时段已被确认占用（RESOURCE_CONFLICT）
       security:
       - sessionCookie: []
   /me/reservations:
@@ -1167,7 +1168,11 @@ paths:
         schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
       responses:
         '200':
-          description: 含申请人、资源、提交及使用时间、用途和状态的分页记录
+          description: 含申请人、资源、提交及使用时间、用途、状态、审核人、处理结论与审核时间的分页记录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationLogPage'
         '403':
           description: 无管理权限
   /reservations:
@@ -1532,6 +1537,88 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ItemReservation'
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
+    PendingReservation:
+      type: object
+      required: [id, resourceType, resourceId, itemName, applicantId, applicantName, startAt,
+        endAt, purpose, quantity, status, submissionSeq, submittedAt, priorityTier, competingPending]
+      properties:
+        id: { type: integer, format: int64 }
+        resourceType: { type: string, enum: [ITEM, SPACE] }
+        resourceId: { type: integer, format: int64 }
+        itemName: { type: string }
+        applicantId: { type: integer, format: int64 }
+        applicantName: { type: string }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        purpose: { type: string }
+        quantity: { type: integer }
+        status: { type: string, enum: [PENDING_APPROVAL] }
+        submissionSeq: { type: integer, format: int64 }
+        submittedAt: { type: string, format: date-time }
+        priorityTier:
+          type: string
+          enum: [COUNSELOR, STUDENT]
+          description: 仅用于提示审核人；COUNSELOR 表示申请人持有辅导员管理员授权
+        competingPending:
+          type: integer
+          minimum: 0
+          description: 同一资源同一时段其他待审申请数量，用于提示批准后其余申请将被占用
+    PendingReservationPage:
+      type: object
+      required: [content, page, size, totalElements]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/PendingReservation'
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
+    ReservationLog:
+      type: object
+      required: [id, resourceType, resourceId, resourceName, applicantId, applicantName,
+        loginName, startAt, endAt, submittedAt, purpose, quantity, status]
+      properties:
+        id: { type: integer, format: int64 }
+        resourceType: { type: string, enum: [ITEM, SPACE] }
+        resourceId: { type: integer, format: int64 }
+        resourceName: { type: string }
+        applicantId: { type: integer, format: int64 }
+        applicantName: { type: string }
+        loginName: { type: string }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        submittedAt: { type: string, format: date-time }
+        purpose: { type: string }
+        quantity: { type: integer }
+        status: { type: string, enum: [CONFIRMED, PENDING_APPROVAL, REJECTED, CANCELLED, EXPIRED] }
+        reviewerName:
+          type: string
+          nullable: true
+          description: 审核人姓名；系统自动确认时为 null
+        decision:
+          type: string
+          nullable: true
+          enum: [APPROVED, REJECTED, AUTO_CONFIRMED]
+        decisionReason:
+          type: string
+          nullable: true
+          description: 拒绝原因；同意时可为空
+        reviewedAt:
+          type: string
+          format: date-time
+          nullable: true
+    ReservationLogPage:
+      type: object
+      required: [content, page, size, totalElements]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReservationLog'
         page: { type: integer }
         size: { type: integer }
         totalElements: { type: integer, format: int64 }

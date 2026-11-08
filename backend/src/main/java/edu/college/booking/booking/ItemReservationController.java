@@ -52,7 +52,7 @@ public class ItemReservationController {
         return service.availability(itemId, date);
     }
     @GetMapping("/review/reservations")
-    public ItemReservationService.ReservationPage pending(Authentication authentication,
+    public ItemReservationService.PendingPage pending(Authentication authentication,
             @RequestParam(defaultValue="0") int page,@RequestParam(defaultValue="20") int size) {
         return service.pending(authentication,page,size);
     }

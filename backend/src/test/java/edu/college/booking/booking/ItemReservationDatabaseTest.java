@@ -79,46 +79,95 @@ class ItemReservationDatabaseTest {
     }
 
     @Test
-    void valuableReviewIsRealSingleReviewerAndChecksCapacity() throws Exception {
+    void valuableReviewIsSingleReviewerAndReviewerChoosesApplicant() throws Exception {
         db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
         db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
-        String payload=body(start,end);
-        String created=mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
-                .header("Idempotency-Key","valuable-review-1").contentType("application/json").content(payload))
-                .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("PENDING_APPROVAL"))
-                .andReturn().getResponse().getContentAsString();
-        long id=json.readTree(created).get("id").asLong();
-        String second=mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
-                .header("Idempotency-Key","valuable-review-2").contentType("application/json").content(payload))
-                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
-        long secondReservation=json.readTree(second).get("id").asLong();
+        long id=create(firstLogin,"valuable-review-1");
+        long secondReservation=create(firstLogin,"valuable-review-2");
         mvc.perform(get("/api/v1/review/reservations").with(user(secondLogin)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].id").value(id));
-        mvc.perform(patch("/api/v1/reservations/"+secondReservation+"/review").with(user(secondLogin)).with(csrf())
-                .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EARLIER_REQUEST_PENDING"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].id").value(id))
+                .andExpect(jsonPath("$.content[0].competingPending").value(1))
+                .andExpect(jsonPath("$.content[0].priorityTier").value("STUDENT"));
         mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(firstLogin)).with(csrf())
                 .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SELF_APPROVAL_FORBIDDEN"));
-        mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(secondLogin)).with(csrf())
+        // 审核人可以越过更早的待审申请，选择后面的申请人
+        mvc.perform(patch("/api/v1/reservations/"+secondReservation+"/review").with(user(secondLogin)).with(csrf())
                 .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CONFIRMED"));
+        // 名额已被占用，较早的申请不能再被批准
         mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(secondLogin)).with(csrf())
-                .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("INVALID_STATE"));
-        mvc.perform(patch("/api/v1/reservations/"+secondReservation+"/review").with(user(secondLogin)).with(csrf())
                 .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("RESOURCE_CONFLICT"));
         mvc.perform(patch("/api/v1/reservations/"+secondReservation+"/review").with(user(secondLogin)).with(csrf())
+                .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("INVALID_STATE"));
+        mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(secondLogin)).with(csrf())
                 .contentType("application/json").content("{\"decision\":\"REJECT\",\"reason\":\"时段冲突\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"));
+        assertEquals(secondId,db.queryForObject("SELECT reviewed_by FROM reservations WHERE id=?",Long.class,secondReservation));
+        assertEquals("APPROVED",db.queryForObject("SELECT decision FROM reservations WHERE id=?",String.class,secondReservation));
+        assertEquals("REJECTED",db.queryForObject("SELECT decision FROM reservations WHERE id=?",String.class,id));
+        assertEquals("时段冲突",db.queryForObject("SELECT decision_reason FROM reservations WHERE id=?",String.class,id));
         assertEquals(2L,db.queryForObject("SELECT count(*) FROM audit_logs WHERE action='RESERVATION_REVIEWED' AND target_type='RESERVATION' AND target_id IN (?,?)",Long.class,id,secondReservation));
+    }
+
+    @Test
+    void reservationLogShowsReviewerAndDecision() throws Exception {
+        db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
+        db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
+        db.update("INSERT INTO role_grants(user_id,role) VALUES (?,'SYSTEM_ADMIN')",secondId);
+        try {
+            long id=create(firstLogin,"log-review-1");
+            mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(secondLogin)).with(csrf())
+                    .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
+                    .andExpect(status().isOk());
+            mvc.perform(get("/api/v1/management/reservations").with(user(secondLogin))
+                    .param("itemId",Long.toString(itemId)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content[0].reviewerName").value("测试乙"))
+                    .andExpect(jsonPath("$.content[0].decision").value("APPROVED"))
+                    .andExpect(jsonPath("$.content[0].reviewedAt").isString());
+        } finally { db.update("DELETE FROM role_grants WHERE user_id=?",secondId); }
+    }
+
+    @Test
+    void concurrentApprovalKeepsExactlyOneDecision() throws Exception {
+        db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
+        db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
+        long id=create(firstLogin,"concurrent-review-1");
+        CountDownLatch ready=new CountDownLatch(2);
+        CountDownLatch go=new CountDownLatch(1);
+        try (var pool=Executors.newFixedThreadPool(2)) {
+            var tasks=java.util.stream.IntStream.range(0,2).mapToObj(index->pool.submit(()->{
+                ready.countDown(); go.await();
+                try {
+                    service.review(new UsernamePasswordAuthenticationToken(secondLogin,"test",List.of()),id,
+                            new ItemReservationService.ReviewRequest("APPROVE",""));
+                    return "OK";
+                } catch (ApiProblem problem) { return problem.code(); }
+            })).toList();
+            ready.await(); go.countDown();
+            List<String> outcomes=new java.util.ArrayList<>();
+            for (var task:tasks) outcomes.add(task.get());
+            assertEquals(1,java.util.Collections.frequency(outcomes,"OK"));
+            assertEquals(1,java.util.Collections.frequency(outcomes,"INVALID_STATE"));
+            assertEquals(1L,db.queryForObject("SELECT count(*) FROM reservations WHERE id=? AND status='CONFIRMED' AND reviewed_by=?",Long.class,id,secondId));
+            assertEquals(1L,db.queryForObject("SELECT count(*) FROM audit_logs WHERE action='RESERVATION_REVIEWED' AND target_id=?",Long.class,id));
+        }
     }
 
     String body(Instant from, Instant to) {
         return json.writeValueAsString(Map.of("resourceType", "ITEM", "resourceId", itemId,
                 "startAt", from.toString(), "endAt", to.toString(),
                 "purpose", "学院活动", "quantity", 1));
+    }
+
+    long create(String login, String key) throws Exception {
+        String created = mvc.perform(post("/api/v1/reservations").with(user(login)).with(csrf())
+                .header("Idempotency-Key", key).contentType("application/json").content(body(start, end)))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        return json.readTree(created).get("id").asLong();
     }
 
     @Test
@@ -134,6 +183,9 @@ class ItemReservationDatabaseTest {
                 .andExpect(jsonPath("$.submissionSeq").isNumber())
                 .andReturn().getResponse().getContentAsString();
         long id = json.readTree(created).get("id").asLong();
+        assertEquals("AUTO_CONFIRMED",
+                db.queryForObject("SELECT decision FROM reservations WHERE id=?", String.class, id));
+        assertNull(db.queryForObject("SELECT reviewed_by FROM reservations WHERE id=?", Long.class, id));
         mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
                 .header("Idempotency-Key", "booking-key-1").contentType("application/json").content(payload))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(id));

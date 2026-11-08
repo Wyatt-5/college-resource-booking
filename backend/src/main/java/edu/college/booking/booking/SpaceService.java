@@ -198,13 +198,15 @@ public class SpaceService {
             if (!before.startAt().isAfter(Instant.now()))
                 throw new ApiProblem(HttpStatus.CONFLICT, "RESERVATION_EXPIRED", "预约开始时间已过");
             if (reservations.confirmedSpaceOverlap(before.resourceId(), before.startAt(), before.endAt()))
-                throw new ApiProblem(HttpStatus.CONFLICT, "RESOURCE_CONFLICT", "该时段已被预约");
-            if (reservations.higherPrioritySpacePending(before, authorization.isCounselor(before.applicantId())))
-                throw new ApiProblem(HttpStatus.CONFLICT, "EARLIER_REQUEST_PENDING", "同一时段有更高优先级申请，请先处理");
+                throw new ApiProblem(HttpStatus.CONFLICT, "RESOURCE_CONFLICT", "该时段已被其他申请占用，可拒绝本申请或请申请人改期");
+            // 辅导员优先只影响队列排序，是否批准由审核人决定，系统不再自动拒绝学生。
         }
-        ItemReservation after = reservations.decide(before.id(), "APPROVE".equals(request.decision()) ? "CONFIRMED" : "REJECTED");
+        boolean approve = "APPROVE".equals(request.decision());
+        String reason = request.reason() == null ? "" : request.reason().trim();
+        ItemReservation after = reservations.decide(before.id(), approve ? "CONFIRMED" : "REJECTED",
+                reviewer.id(), approve ? "APPROVED" : "REJECTED", reason);
         audit.record(reviewer.id(), "RESERVATION_REVIEWED", "RESERVATION", before.id(), before,
-                java.util.Map.of("reservation", after, "reason", request.reason() == null ? "" : request.reason().trim()));
+                java.util.Map.of("reservation", after, "reason", reason));
         return after;
     }
 

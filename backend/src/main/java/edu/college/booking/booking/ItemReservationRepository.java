@@ -69,10 +69,11 @@ public class ItemReservationRepository {
         long id = jdbc.queryForObject("""
                 INSERT INTO reservations
                     (applicant_id, resource_type, item_id, start_at, end_at, purpose,
-                     quantity, status, handover_status, idempotency_key, payload_hash)
-                VALUES (?, 'ITEM', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                     quantity, status, handover_status, decision, idempotency_key, payload_hash)
+                VALUES (?, 'ITEM', ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'CONFIRMED' THEN 'AUTO_CONFIRMED' END, ?, ?)
+                RETURNING id
                 """, Long.class, applicantId, itemId, Timestamp.from(start), Timestamp.from(end),
-                purpose, quantity, status, "CONFIRMED".equals(status) ? "NOT_PICKED_UP" : null, key, hash);
+                purpose, quantity, status, "CONFIRMED".equals(status) ? "NOT_PICKED_UP" : null, status, key, hash);
         return jdbc.query(SELECT + " WHERE r.id=?", (rs, row) -> map(rs), id).getFirst();
     }
 
@@ -95,20 +96,6 @@ public class ItemReservationRepository {
                 """, Boolean.class, spaceId, Timestamp.from(end), Timestamp.from(start));
     }
 
-    public boolean higherPrioritySpacePending(ItemReservation request, boolean counselor) {
-        return jdbc.queryForObject("""
-                SELECT EXISTS(SELECT 1 FROM reservations r
-                    WHERE r.space_id=? AND r.status='PENDING_APPROVAL' AND r.id<>?
-                      AND r.start_at<? AND r.end_at>?
-                      AND ((EXISTS(SELECT 1 FROM role_grants g WHERE g.user_id=r.applicant_id
-                            AND g.role='COUNSELOR_ADMIN') AND (NOT ? OR r.submission_seq<?))
-                           OR (NOT EXISTS(SELECT 1 FROM role_grants g WHERE g.user_id=r.applicant_id
-                                AND g.role='COUNSELOR_ADMIN') AND NOT ? AND r.submission_seq<?)))
-                """, Boolean.class, request.resourceId(), request.id(), Timestamp.from(request.endAt()),
-                Timestamp.from(request.startAt()), counselor, request.submissionSeq(), counselor,
-                request.submissionSeq());
-    }
-
     public List<ItemReservation> mine(long applicantId, int size, long offset) {
         return jdbc.query(SELECT + " WHERE r.applicant_id=? ORDER BY r.id DESC LIMIT ? OFFSET ?",
                 (rs, row) -> map(rs), applicantId, size, offset);
@@ -120,20 +107,31 @@ public class ItemReservationRepository {
     }
     public record BookingLog(long id, String resourceType, long resourceId, String resourceName,
             long applicantId, String applicantName, String loginName, Instant startAt, Instant endAt,
-            Instant submittedAt, String purpose, int quantity, String status) {}
+            Instant submittedAt, String purpose, int quantity, String status,
+            String reviewerName, String decision, String decisionReason, Instant reviewedAt) {}
 
     public List<BookingLog> log(Long itemId, int size, long offset) {
         return jdbc.query("""
-                SELECT r.*,u.display_name,u.login_name,COALESCE(i.name,s.name) AS resource_name
-                FROM reservations r JOIN users u ON u.id=r.applicant_id
-                LEFT JOIN items i ON i.id=r.item_id LEFT JOIN bookable_spaces s ON s.id=r.space_id
-                WHERE (CAST(? AS BIGINT) IS NULL OR r.item_id=?) ORDER BY r.submitted_at DESC,r.id DESC LIMIT ? OFFSET ?
-                """, (rs,row)->new BookingLog(rs.getLong("id"),rs.getString("resource_type"),
-                "ITEM".equals(rs.getString("resource_type"))?rs.getLong("item_id"):rs.getLong("space_id"),
-                rs.getString("resource_name"),rs.getLong("applicant_id"),rs.getString("display_name"),
-                rs.getString("login_name"),rs.getTimestamp("start_at").toInstant(),
-                rs.getTimestamp("end_at").toInstant(),rs.getTimestamp("submitted_at").toInstant(),
-                rs.getString("purpose"),rs.getInt("quantity"),rs.getString("status")),itemId,itemId,size,offset);
+                SELECT r.*, u.display_name AS applicant_name, u.login_name,
+                       rv.display_name AS reviewer_name,
+                       COALESCE(i.name, s.name) AS resource_name
+                FROM reservations r
+                JOIN users u ON u.id = r.applicant_id
+                LEFT JOIN users rv ON rv.id = r.reviewed_by
+                LEFT JOIN items i ON i.id = r.item_id
+                LEFT JOIN bookable_spaces s ON s.id = r.space_id
+                WHERE (CAST(? AS BIGINT) IS NULL OR r.item_id = ?)
+                ORDER BY r.submitted_at DESC, r.id DESC LIMIT ? OFFSET ?
+                """, (rs, row) -> new BookingLog(rs.getLong("id"), rs.getString("resource_type"),
+                "ITEM".equals(rs.getString("resource_type")) ? rs.getLong("item_id") : rs.getLong("space_id"),
+                rs.getString("resource_name"), rs.getLong("applicant_id"), rs.getString("applicant_name"),
+                rs.getString("login_name"), rs.getTimestamp("start_at").toInstant(),
+                rs.getTimestamp("end_at").toInstant(), rs.getTimestamp("submitted_at").toInstant(),
+                rs.getString("purpose"), rs.getInt("quantity"), rs.getString("status"),
+                rs.getString("reviewer_name"), rs.getString("decision"),
+                rs.getString("decision_reason"),
+                rs.getTimestamp("reviewed_at") == null ? null : rs.getTimestamp("reviewed_at").toInstant()),
+                itemId, itemId, size, offset);
     }
     public long countLog(Long itemId) {
         return jdbc.queryForObject("SELECT count(*) FROM reservations WHERE (CAST(? AS BIGINT) IS NULL OR item_id=?)",
@@ -153,26 +151,59 @@ public class ItemReservationRepository {
     public Optional<ItemReservation> byId(long id) {
         return jdbc.query(SELECT + " WHERE r.id=?", (rs, row) -> map(rs), id).stream().findFirst();
     }
-    public List<ItemReservation> pending(int size,long offset) {
-        return jdbc.query(SELECT + " WHERE r.status='PENDING_APPROVAL' ORDER BY r.submission_seq LIMIT ? OFFSET ?",
-                (rs,row)->map(rs),size,offset);
+    public record PendingItem(long id, String resourceType, long resourceId, String itemName,
+            long applicantId, String applicantName, Instant startAt, Instant endAt, String purpose,
+            int quantity, String status, long submissionSeq, Instant submittedAt,
+            String priorityTier, int competingPending) {}
+
+    // Counselor requests are listed first as a hint only; the reviewer still decides.
+    public List<PendingItem> pending(int size, long offset) {
+        return jdbc.query("""
+                SELECT * FROM (
+                    SELECT r.id, r.resource_type, COALESCE(r.item_id, r.space_id) AS resource_id,
+                           COALESCE(i.name, s.name) AS item_name, r.applicant_id,
+                           u.display_name AS applicant_name, r.start_at, r.end_at, r.purpose,
+                           r.quantity, r.status, r.submission_seq, r.submitted_at,
+                           EXISTS(SELECT 1 FROM role_grants g WHERE g.user_id = r.applicant_id
+                                  AND g.role = 'COUNSELOR_ADMIN') AS counselor,
+                           (SELECT count(*) FROM reservations o
+                              WHERE o.status = 'PENDING_APPROVAL' AND o.id <> r.id
+                                AND o.start_at < r.end_at AND o.end_at > r.start_at
+                                AND ((r.space_id IS NOT NULL AND o.space_id = r.space_id)
+                                  OR (r.item_id IS NOT NULL AND o.item_id = r.item_id))) AS competing
+                    FROM reservations r
+                    JOIN users u ON u.id = r.applicant_id
+                    LEFT JOIN items i ON i.id = r.item_id
+                    LEFT JOIN bookable_spaces s ON s.id = r.space_id
+                    WHERE r.status = 'PENDING_APPROVAL'
+                ) q
+                ORDER BY (resource_type = 'SPACE' AND counselor) DESC, submission_seq
+                LIMIT ? OFFSET ?
+                """, (rs, row) -> new PendingItem(rs.getLong("id"), rs.getString("resource_type"),
+                rs.getLong("resource_id"), rs.getString("item_name"), rs.getLong("applicant_id"),
+                rs.getString("applicant_name"), rs.getTimestamp("start_at").toInstant(),
+                rs.getTimestamp("end_at").toInstant(), rs.getString("purpose"), rs.getInt("quantity"),
+                rs.getString("status"), rs.getLong("submission_seq"),
+                rs.getTimestamp("submitted_at").toInstant(),
+                rs.getBoolean("counselor") ? "COUNSELOR" : "STUDENT", rs.getInt("competing")),
+                size, offset);
     }
     public long countPending() {
         return jdbc.queryForObject("SELECT count(*) FROM reservations WHERE status='PENDING_APPROVAL'",Long.class);
     }
-    public boolean earlierPendingOverlaps(ItemReservation request) {
-        return jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM reservations WHERE item_id=? AND status='PENDING_APPROVAL' AND submission_seq<? AND start_at<? AND end_at>?)",
-                Boolean.class,request.resourceId(),request.submissionSeq(),Timestamp.from(request.endAt()),Timestamp.from(request.startAt()));
-    }
-    public ItemReservation decide(long id,String state) {
-        int updated=jdbc.update("""
+    public ItemReservation decide(long id, String state, long reviewerId, String decision, String reason) {
+        int updated = jdbc.update("""
                 UPDATE reservations
-                SET status=?, handover_status=CASE
-                    WHEN resource_type='ITEM' AND ?='CONFIRMED' THEN 'NOT_PICKED_UP'
-                    ELSE NULL END
-                WHERE id=? AND status='PENDING_APPROVAL'
-                """,state,state,id);
-        if(updated!=1)throw new IllegalStateException("预约状态已变化");
+                   SET status = ?, handover_status = CASE
+                           WHEN resource_type = 'ITEM' AND ? = 'CONFIRMED' THEN 'NOT_PICKED_UP'
+                           ELSE NULL END,
+                       reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP,
+                       decision = ?, decision_reason = ?
+                 WHERE id = ? AND status = 'PENDING_APPROVAL'
+                """, state, state, reviewerId, decision, reason, id);
+        if (updated != 1)
+            throw new edu.college.booking.common.ApiProblem(org.springframework.http.HttpStatus.CONFLICT,
+                    "INVALID_STATE", "申请已被其他审核员处理，请刷新队列");
         return byId(id).orElseThrow();
     }
 
