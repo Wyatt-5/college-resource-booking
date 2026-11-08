@@ -207,22 +207,22 @@ class CatalogDatabaseTest {
     @Test void returnAcceptanceIsIdempotentAndRejectKeepsStockOccupied()throws Exception{
         long item=create(location,"待归还相机");
         long unit=db.queryForObject("INSERT INTO item_units(item_id,unit_code,status) VALUES (?,'RETURN-1','RETURN_SUBMITTED') RETURNING id",Long.class,item);
-        var photos=List.of(new ItemImage(1,item,"现场.png","/protected-return-photo"));
-        var record=new ReservationReturnGateway.ReturnRecord(9001,item,"待归还相机",location,List.of(unit),"RETURN-1","测试借用人",java.time.Instant.now(),"",photos,"RETURN_SUBMITTED");
+        var photos=List.of(new ReservationReturnGateway.ReturnPhoto(1,"现场.png","/protected-return-photo"));
+        var record=new ReservationReturnGateway.ReturnRecord(9001,item,"待归还相机",location,List.of(unit),List.of("RETURN-1"),"测试借用人",java.time.Instant.now(),"",photos,"RETURN_SUBMITTED");
         given(returns.lock(9001)).willReturn(record);
         mvc.perform(post("/api/v1/reservations/9001/return-verification").with(admin()).header("Idempotency-Key","reject-missing-reason")
                 .contentType("application/json").content("{\"decision\":\"REJECT\"}"))
           .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.reason").exists());
         mvc.perform(post("/api/v1/reservations/9001/return-verification").with(admin()).header("Idempotency-Key","reject")
                 .contentType("application/json").content("{\"decision\":\"REJECT\",\"reason\":\"配件未还\"}"))
-          .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("RETURN_REJECTED"));
+          .andExpect(status().isOk()).andExpect(jsonPath("$.handoverStatus").value("RETURN_REJECTED"));
         assertEquals("RETURN_SUBMITTED",db.queryForObject("SELECT status FROM item_units WHERE id=?",String.class,unit));
         for(int i=0;i<2;i++)mvc.perform(post("/api/v1/reservations/9001/return-verification").with(admin()).header("Idempotency-Key","accept")
                 .contentType("application/json").content("{\"decision\":\"ACCEPT\"}"))
-          .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("COMPLETED"));
+          .andExpect(status().isOk()).andExpect(jsonPath("$.handoverStatus").value("COMPLETED"));
         assertEquals("AVAILABLE",db.queryForObject("SELECT status FROM item_units WHERE id=?",String.class,unit));
         org.mockito.Mockito.verify(returns,org.mockito.Mockito.times(1)).finish(9001,"COMPLETED","catalog-test-admin","");
-        given(returns.lock(9001)).willReturn(new ReservationReturnGateway.ReturnRecord(9001,item,"待归还相机",location,List.of(unit),"RETURN-1","测试借用人",java.time.Instant.now(),"",photos,"COMPLETED"));
+        given(returns.lock(9001)).willReturn(new ReservationReturnGateway.ReturnRecord(9001,item,"待归还相机",location,List.of(unit),List.of("RETURN-1"),"测试借用人",java.time.Instant.now(),"",photos,"COMPLETED"));
         mvc.perform(post("/api/v1/reservations/9001/return-verification").with(admin()).header("Idempotency-Key","another-click")
                 .contentType("application/json").content("{\"decision\":\"ACCEPT\"}"))
           .andExpect(status().isConflict());

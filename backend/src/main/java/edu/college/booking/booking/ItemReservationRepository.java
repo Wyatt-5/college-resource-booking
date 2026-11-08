@@ -43,7 +43,9 @@ public class ItemReservationRepository {
     public List<Occupancy> occupancy(long itemId, Instant start, Instant end) {
         return jdbc.query("""
                 SELECT start_at,end_at,quantity,status FROM reservations WHERE item_id=?
-                  AND status IN ('CONFIRMED','PENDING_APPROVAL') AND start_at<? AND end_at>?
+                  AND status IN ('CONFIRMED','PENDING_APPROVAL')
+                  AND (handover_status IS NULL OR handover_status<>'COMPLETED')
+                  AND start_at<? AND end_at>?
                 """, (rs, row) -> new Occupancy(rs.getTimestamp(1).toInstant(),
                 rs.getTimestamp(2).toInstant(), rs.getInt(3), rs.getString(4)),
                 itemId, Timestamp.from(end), Timestamp.from(start));
@@ -67,10 +69,10 @@ public class ItemReservationRepository {
         long id = jdbc.queryForObject("""
                 INSERT INTO reservations
                     (applicant_id, resource_type, item_id, start_at, end_at, purpose,
-                     quantity, status, idempotency_key, payload_hash)
-                VALUES (?, 'ITEM', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                     quantity, status, handover_status, idempotency_key, payload_hash)
+                VALUES (?, 'ITEM', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
                 """, Long.class, applicantId, itemId, Timestamp.from(start), Timestamp.from(end),
-                purpose, quantity, status, key, hash);
+                purpose, quantity, status, "CONFIRMED".equals(status) ? "NOT_PICKED_UP" : null, key, hash);
         return jdbc.query(SELECT + " WHERE r.id=?", (rs, row) -> map(rs), id).getFirst();
     }
 
@@ -138,7 +140,12 @@ public class ItemReservationRepository {
                 Long.class,itemId,itemId);
     }
     public ItemReservation cancel(long id) {
-        int changed=jdbc.update("UPDATE reservations SET status='CANCELLED' WHERE id=? AND status IN ('PENDING_APPROVAL','CONFIRMED') AND start_at>CURRENT_TIMESTAMP",id);
+        int changed=jdbc.update("""
+                UPDATE reservations SET status='CANCELLED',handover_status=NULL
+                WHERE id=? AND status IN ('PENDING_APPROVAL','CONFIRMED')
+                  AND (handover_status IS NULL OR handover_status='NOT_PICKED_UP')
+                  AND start_at>CURRENT_TIMESTAMP
+                """,id);
         if(changed!=1)throw new edu.college.booking.common.ApiProblem(org.springframework.http.HttpStatus.CONFLICT,
                 "INVALID_STATE","仅能取消尚未开始的待审核或已确认预约");
         return byId(id).orElseThrow();
@@ -158,7 +165,13 @@ public class ItemReservationRepository {
                 Boolean.class,request.resourceId(),request.submissionSeq(),Timestamp.from(request.endAt()),Timestamp.from(request.startAt()));
     }
     public ItemReservation decide(long id,String state) {
-        int updated=jdbc.update("UPDATE reservations SET status=? WHERE id=? AND status='PENDING_APPROVAL'",state,id);
+        int updated=jdbc.update("""
+                UPDATE reservations
+                SET status=?, handover_status=CASE
+                    WHEN resource_type='ITEM' AND ?='CONFIRMED' THEN 'NOT_PICKED_UP'
+                    ELSE NULL END
+                WHERE id=? AND status='PENDING_APPROVAL'
+                """,state,state,id);
         if(updated!=1)throw new IllegalStateException("预约状态已变化");
         return byId(id).orElseThrow();
     }
@@ -169,6 +182,7 @@ public class ItemReservationRepository {
                 rs.getLong("applicant_id"), rs.getString("item_name"),
                 rs.getTimestamp("start_at").toInstant(), rs.getTimestamp("end_at").toInstant(),
                 rs.getString("purpose"), rs.getInt("quantity"), rs.getString("status"),
+                rs.getString("handover_status"), rs.getString("last_return_reason"),
                 rs.getLong("submission_seq"), rs.getTimestamp("submitted_at").toInstant());
     }
 

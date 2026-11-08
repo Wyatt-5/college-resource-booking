@@ -1204,31 +1204,16 @@ paths:
       security:
       - sessionCookie: []
     get:
-      summary: 管理端筛选预约（须按管理范围授权）
+      summary: 管理员读取待核验归还队列（按管理范围授权）
       operationId: listReservations
       parameters:
-      - name: status
+      - name: handoverStatus
         in: query
+        required: true
         schema:
           type: string
           enum:
-          - PENDING_APPROVAL
-          - WAITLISTED
-          - CONFIRMED
-          - REJECTED
-          - CANCELLED
-          - EXPIRED
-          - OVERRIDDEN
           - RETURN_SUBMITTED
-          - RETURN_REJECTED
-          - COMPLETED
-      - name: resourceType
-        in: query
-        schema:
-          type: string
-          enum:
-          - ITEM
-          - SPACE
       - name: page
         in: query
         schema:
@@ -1244,7 +1229,7 @@ paths:
           default: 20
       responses:
         '200':
-          description: 预约列表；status=RETURN_SUBMITTED 时为归还核验队列
+          description: 预约列表；handoverStatus=RETURN_SUBMITTED 时为归还核验队列
           content:
             application/json:
               schema:
@@ -1283,9 +1268,107 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-      description: 本模块只处理status=RETURN_SUBMITTED；需要ReservationReturnGateway提供真实预约和归还绑定。未接入时返回503，其他预约查询由预约模块实现。
+      description: 当前实现只处理 handoverStatus=RETURN_SUBMITTED，并按管理员地点范围过滤。
       security:
       - sessionCookie: []
+  /reservations/{reservationId}/pickup:
+    post:
+      summary: 申请人确认领取并绑定具体实物编号
+      operationId: pickupReservation
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: reservationId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [unitCodes]
+              properties:
+                unitCodes:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items: { type: string, minLength: 1, maxLength: 100 }
+      responses:
+        '200':
+          description: 领取成功；同键同内容重试不会重复绑定实物
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoverResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+  /reservations/{reservationId}/return-submission:
+    post:
+      summary: 申请人上传照片和备注并提交归还
+      operationId: submitItemReturn
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: reservationId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photos]
+              properties:
+                photos:
+                  type: array
+                  minItems: 1
+                  maxItems: 6
+                  items: { type: string, format: binary }
+                remark: { type: string, maxLength: 300 }
+      responses:
+        '200':
+          description: 归还材料已进入待核验队列；同键同内容重试不会重复创建提交
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HandoverResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '413': { description: 文件超过大小限制 }
+  /return-photos/{photoId}:
+    get:
+      summary: 申请人或有地点权限的管理员读取归还照片
+      operationId: readReturnPhoto
+      security:
+      - sessionCookie: []
+      parameters:
+      - name: photoId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: JPG、PNG或WebP图片
+          content:
+            image/jpeg: {}
+            image/png: {}
+            image/webp: {}
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /reservations/{reservationId}/return-verification:
     post:
       summary: 管理员核验归还；接受后实物重新可借，驳回须写原因
@@ -1318,12 +1401,12 @@ paths:
                 type: object
                 required:
                 - id
-                - status
+                - handoverStatus
                 properties:
                   id:
                     type: integer
                     format: int64
-                  status:
+                  handoverStatus:
                     type: string
                     enum:
                     - COMPLETED
@@ -1422,7 +1505,7 @@ components:
         purpose, quantity, status, submissionSeq, submittedAt]
       properties:
         id: { type: integer, format: int64 }
-        resourceType: { type: string, enum: [ITEM] }
+        resourceType: { type: string, enum: [ITEM, SPACE] }
         resourceId: { type: integer, format: int64 }
         applicantId: { type: integer, format: int64 }
         itemName: { type: string }
@@ -1431,6 +1514,14 @@ components:
         purpose: { type: string }
         quantity: { type: integer }
         status: { type: string, enum: [CONFIRMED, PENDING_APPROVAL, REJECTED, CANCELLED, EXPIRED] }
+        handoverStatus:
+          type: string
+          nullable: true
+          enum: [NOT_PICKED_UP, CHECKED_OUT, RETURN_SUBMITTED, RETURN_REJECTED, COMPLETED]
+        lastReturnReason:
+          type: string
+          nullable: true
+          maxLength: 200
         submissionSeq: { type: integer, format: int64 }
         submittedAt: { type: string, format: date-time }
     ItemReservationPage:
@@ -1764,16 +1855,16 @@ components:
           description: 受权限控制的图片地址，联调阶段由后端提供
     ReturnSubmission:
       type: object
-      description: 归还核验队列条目（status=RETURN_SUBMITTED 的预约视图）
+      description: 归还核验队列条目（handoverStatus=RETURN_SUBMITTED 的预约视图）
       required:
       - id
       - itemId
       - itemName
-      - unitCode
+      - unitCodes
       - borrower
       - submittedAt
       - photos
-      - status
+      - handoverStatus
       properties:
         id:
           type: integer
@@ -1786,9 +1877,11 @@ components:
         itemName:
           type: string
           example: 佳能相机 EOS R50
-        unitCode:
-          type: string
-          example: CAM-2026-001
+        unitCodes:
+          type: array
+          minItems: 1
+          items: { type: string }
+          example: [CAM-2026-001]
         borrower:
           type: string
           example: 王同学
@@ -1803,10 +1896,22 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/ReturnPhoto'
-        status:
+        handoverStatus:
+          $ref: '#/components/schemas/HandoverStatus'
+    HandoverResult:
+      type: object
+      required: [id, handoverStatus, unitCodes, photoCount]
+      properties:
+        id: { type: integer, format: int64 }
+        handoverStatus: { $ref: '#/components/schemas/HandoverStatus' }
+        unitCodes:
+          type: array
+          items: { type: string }
+        photoCount: { type: integer, minimum: 0 }
+        lastReturnReason:
           type: string
-          enum:
-          - RETURN_SUBMITTED
+          nullable: true
+          maxLength: 200
     ReturnVerificationInput:
       type: object
       required:
@@ -1905,6 +2010,15 @@ components:
       - CHECKED_OUT
       - RETURN_SUBMITTED
       description: 前四项可由管理员维护；已借出和待核验仅由交接业务更新。
+    HandoverStatus:
+      type: string
+      enum:
+      - NOT_PICKED_UP
+      - CHECKED_OUT
+      - RETURN_SUBMITTED
+      - RETURN_REJECTED
+      - COMPLETED
+      description: 物品领取和归还状态；与预约审批状态status相互独立。
     UserRole:
       type: string
       description: 开发约束 2.2 定义的五种角色；管理权限与审核权限分开
