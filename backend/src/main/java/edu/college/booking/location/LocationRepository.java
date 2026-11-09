@@ -15,11 +15,12 @@ public class LocationRepository {
 
     public List<Location> findAll() {
         return jdbcTemplate.query(
-                "SELECT id, name, type, status FROM locations ORDER BY id",
+                "SELECT l.id, l.name, l.type, l.status, (i.location_id IS NOT NULL) AS has_image FROM locations l LEFT JOIN location_images i ON i.location_id=l.id WHERE l.status='ACTIVE' ORDER BY l.id",
                 (resultSet, rowNum) -> new Location(
                         resultSet.getLong("id"),
                         resultSet.getString("name"),
                         LocationType.valueOf(resultSet.getString("type")),
-                        LocationStatus.valueOf(resultSet.getString("status"))));
+                        LocationStatus.valueOf(resultSet.getString("status")),
+                        resultSet.getBoolean("has_image") ? "/api/v1/locations/" + resultSet.getLong("id") + "/image" : null));
     }
 }

@@ -1,11 +1,15 @@
 package edu.college.booking.auth;
 
 import edu.college.booking.audit.AuditService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -28,6 +32,14 @@ public class AdminController {
         this.audit = audit;
     }
 
+    @PostMapping("/users/me/password")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void changePassword(@RequestBody AdminService.PasswordChange input, Authentication authentication,
+            HttpServletRequest request, HttpServletResponse response) {
+        admins.changePassword(authentication, input);
+        new SecurityContextLogoutHandler().logout(request, response, authentication);
+    }
+
     @GetMapping("/users")
     public List<UserProfile> users(Authentication authentication) {
         return admins.list(authentication);
@@ -37,6 +49,12 @@ public class AdminController {
     @ResponseStatus(HttpStatus.CREATED)
     public UserProfile create(@RequestBody AdminService.NewUser input, Authentication authentication) {
         return admins.create(authentication, input);
+    }
+
+    @DeleteMapping("/users/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void disable(@PathVariable long id, Authentication authentication) {
+        admins.disable(authentication, id);
     }
 
     @PutMapping("/users/{id}/grants")

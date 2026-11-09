@@ -29,7 +29,7 @@ public class ReturnVerificationService {
         var actor=access.current();
         if(page<0||size<1||size>100)throw CatalogException.invalid("page","分页参数无效");
         return gateway().queue(actor,page,size).stream()
-                .filter(r->actor.manages(r.locationId())&&"RETURN_SUBMITTED".equals(r.status())).toList();
+                .filter(r->actor.manages(r.locationId())&&"RETURN_SUBMITTED".equals(r.handoverStatus())).toList();
     }
     @Transactional
     public Map<String,Object> verify(long id,Map<String,Object> body,String key){
@@ -49,18 +49,22 @@ public class ReturnVerificationService {
         if(item.locationId()!=record.locationId())throw new CatalogException(HttpStatus.CONFLICT,"INVALID_STATE","物品地点已变更，请重新确认授权");
         String state="ACCEPT".equals(decision)?"COMPLETED":"RETURN_REJECTED";
         operations.once(actor.id(),"VERIFY_RETURN:"+id,key,decision+":"+reason,()->{
-            if(!"RETURN_SUBMITTED".equals(record.status()))throw new CatalogException(HttpStatus.CONFLICT,"INVALID_STATE","该归还已处理或状态不符");
+            if(!"RETURN_SUBMITTED".equals(record.handoverStatus()))throw new CatalogException(HttpStatus.CONFLICT,"INVALID_STATE","该归还已处理或状态不符");
             if(record.photos()==null||record.photos().isEmpty()||record.unitIds()==null||record.unitIds().isEmpty()
                     ||new HashSet<>(record.unitIds()).size()!=record.unitIds().size())throw new CatalogException(HttpStatus.CONFLICT,"INVALID_STATE","归还缺少有效照片或实物绑定");
             for(long unitId:record.unitIds()){
                 var unit=repo.unit(record.itemId(),unitId).orElseThrow(CatalogException::missing);
                 if(!"RETURN_SUBMITTED".equals(unit.status()))throw new CatalogException(HttpStatus.CONFLICT,"INVALID_STATE","实物尚未进入待核验状态");
-                if("ACCEPT".equals(decision))db.update("UPDATE item_units SET status='AVAILABLE' WHERE id=?",unitId);
+                if("ACCEPT".equals(decision)&&db.update("""
+                        UPDATE item_units SET status='AVAILABLE'
+                        WHERE id=? AND item_id=? AND status='RETURN_SUBMITTED'
+                        """,unitId,record.itemId())!=1)throw new CatalogException(HttpStatus.CONFLICT,
+                                "INVALID_STATE","实物状态已变化，请重新读取");
             }
             gateway.finish(id,state,actor.id(),reason);
-            operations.audit(actor.id(),"VERIFY_RETURN",id,record.status(),state+":"+reason);
+            operations.audit(actor.id(),"VERIFY_RETURN",id,record.handoverStatus(),state+":"+reason);
             return id;
         });
-        return Map.of("id",id,"status",state);
+        return Map.of("id",id,"handoverStatus",state);
     }
 }

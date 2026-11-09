@@ -2,7 +2,7 @@
   <section class="location-overview" aria-labelledby="location-overview-title">
     <header class="location-overview-intro">
       <div>
-        <p class="eyebrow">用户端 · 资源目录</p>
+
         <h1 id="location-overview-title">存放地点</h1>
         <p>选择办公室或物资室，查看其中的物品并提交预约。</p>
       </div>
@@ -31,7 +31,8 @@
         type="button" :disabled="location.status !== 'ACTIVE'"
         :aria-label="`查看${location.name}的物品，${location.itemCount}种物品，${location.availableUnits}件当前可借`"
         @click="emit('open-location', location)">
-        <span class="location-overview-icon" aria-hidden="true">{{ typeLabel(location.type).slice(0, 1) }}</span>
+        <img v-if="location.imageUrl" class="location-overview-photo" :src="location.imageUrl" :alt="`${location.name}照片`">
+        <span v-else class="location-overview-icon" aria-hidden="true">{{ typeLabel(location.type).slice(0, 1) }}</span>
         <span class="location-overview-body">
           <span class="location-overview-type">{{ typeLabel(location.type) }}</span>
           <strong>{{ location.name }}</strong>

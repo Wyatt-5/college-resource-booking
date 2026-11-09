@@ -9,7 +9,9 @@
 
 * { box-sizing: border-box; }
 
-body { min-width: 320px; margin: 0; }
+/* 不再写死 min-width: 320px —— 视口 320px 且带竖向滚动条时它会撑出横向滚动条 */
+body { margin: 0; overflow-x: hidden; }
+html { -webkit-text-size-adjust: 100%; }
 
 button { font: inherit; cursor: pointer; }
 
@@ -24,28 +26,24 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 }
 
 .header-inner {
-  max-width: 1400px;
-  min-height: 80px;
-  margin: 0 auto;
-  padding: 12px 36px;
-  display: flex;
+  width: 100%;
+  min-height: 84px;
+  padding: 10px 28px;
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto minmax(0,1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 20px;
+  gap: 18px;
 }
+.brand { display: flex; align-items: center; min-width: 0; }
+.brand-filter { position: absolute; pointer-events: none; }
+.brand-logo { position: relative; display: block; width: min(205px,100%); aspect-ratio: 640 / 239; flex: 0 1 auto; }
+.brand-logo img { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.brand-wordmark-text { clip-path: inset(0 0 0 48%); mix-blend-mode: screen; filter: invert(1) hue-rotate(180deg); }
+.brand-wordmark-emblem { clip-path: inset(0 52% 0 0); filter: url(#emblem-transparent); }
+.brand-wordmark-line { clip-path: inset(51.5% 0 43.5% 48%); filter: url(#emblem-transparent); }
 
-.brand { display: flex; align-items: center; gap: 13px; line-height: 1.25; }
-.brand strong { display: block; font-size: 18px; letter-spacing: .03em; }
-.brand small { display: block; margin-top: 5px; color: #cdc3e6; font-size: 12px; }
-.brand-logo {
-  display: block;
-  height: 46px;
-  width: auto;
-  flex: 0 0 auto;
-  border-radius: 10px;
-  background: #fff;
-  padding: 5px 10px;
-}
+.site-title { margin: 0; text-align: center; font-size: clamp(17px, 1.6vw, 23px); letter-spacing: .02em; white-space: nowrap; }
+.header-actions { justify-self: end; }
 
 .mode-switch {
   display: flex;
@@ -130,7 +128,7 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .form-ok { margin: 0 0 14px; border-radius: 10px; padding: 11px 14px; background: #e6e0f5; color: #43326e; font-size: 13px; font-weight: 700; }
 
 /* 账号管理页 */
-.account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+.account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 20px; }
 .account-card {
   border: 1px solid #e4dff0;
   border-radius: 15px;
@@ -160,9 +158,9 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .layout {
   display: grid;
   grid-template-columns: 235px minmax(0, 1fr);
-  max-width: 1400px;
+  width: 100%;
   min-height: calc(100vh - 80px);
-  margin: 0 auto;
+  margin: 0;
 }
 
 .side-nav {
@@ -221,9 +219,11 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .hero-decoration { flex: 0 0 auto; color: #edc78e; font-size: 63px; font-weight: 300; letter-spacing: -.09em; }
 .hero-decoration span { font-size: 30px; color: #b3a6d9; }
 
-.content-section { margin-top: 38px; }
+.content-section { margin-top: 0; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .section-heading h2 { margin: 7px 0 0; font-size: 24px; }
+/* 标题区允许收缩换行，避免说明文字把刷新按钮挤到下一行 */
+.section-heading > div:first-child { flex: 1 1 0; min-width: 0; }
 .refresh-button, .retry-button {
   border: 1px solid #c5bcdc;
   border-radius: 9px;
@@ -470,7 +470,7 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
   font-weight: 700;
 }
 .primary-button:hover { background: #4a3580; }
-.primary-button:disabled { opacity: .55; cursor: wait; }
+.primary-button:disabled { opacity: .55; cursor: not-allowed; }
 .form-tip { margin: 11px 0 0; color: #948ab0; font-size: 12px; }
 
 .created-summary { background: #f5f3fc; border-color: #d9d2ec; }
@@ -575,6 +575,7 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .badge-ok { background: #e6e0f5; color: #5a4691; }
 .badge-off { background: #f0edf6; color: #857ba3; }
 .badge-pending { background: #e4ecf7; color: #2c5387; }
+.badge-reject { background: #f8e4de; color: #8f3a25; }
 
 .unit-status-select {
   border: 1px solid #d3cbe8;
@@ -680,7 +681,9 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .photo-count { position: absolute; right: 10px; bottom: 10px; border-radius: 100px; padding: 3px 10px; background: #2f2350cc; color: #fff; font-size: 11px; }
 .item-body { padding: 15px 18px 16px; }
 .item-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.item-title-row h3 { margin: 0; font-size: 16px; }
+.item-title-row h3 { margin: 0; font-size: 16px; min-width: 0; }
+/* 名称较长时标题换行，状态标签保持一行不被挤成竖排 */
+.item-title-row .status-badge { flex: 0 0 auto; white-space: nowrap; }
 .item-location { margin: 6px 0 0; color: #948ab0; font-size: 12px; }
 .item-rules { margin: 8px 0 0; color: #5d5478; font-size: 12px; }
 .item-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; padding-top: 12px; border-top: 1px solid #ede9f6; }
@@ -701,40 +704,58 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .rule-list dd { margin: 0; color: #241b3d; font-weight: 700; text-align: right; }
 
 @media (max-width: 800px) {
-  .header-inner { min-height: 68px; padding: 11px 18px; }
+  .header-inner { min-height: 68px; padding: 11px 18px; grid-template-columns: minmax(0,1fr) auto; }
+  .site-title { grid-row: 2; grid-column: 1 / -1; white-space: normal; }
   .layout { display: block; }
   .side-nav {
     display: flex;
     gap: 5px;
     align-items: center;
-    padding: 10px 15px;
+    padding: 10px 20px 10px 15px;
     border-right: 0;
     border-bottom: 1px solid #e6e2f1;
     overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
   }
+  /* 手机上导航是横向滑动条：隐藏系统滚动条，避免出现灰色滚动条压住菜单 */
+  .side-nav::-webkit-scrollbar { display: none; }
   .nav-caption, .nav-note { display: none; }
-  .nav-button { flex: 0 0 auto; width: auto; margin: 0; padding: 10px 13px; white-space: nowrap; }
+  .nav-button {
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0;
+    padding: 11px 15px;
+    min-height: 44px;
+    white-space: nowrap;
+    scroll-snap-align: start;
+  }
   .main-content { padding: 23px 20px 25px; }
   .hero { padding: 28px; }
   .hero-decoration { display: none; }
 }
 
 @media (max-width: 560px) {
-  .header-inner { align-items: flex-start; flex-wrap: wrap; gap: 10px; padding: 11px 14px 13px; }
-  .brand { width: 100%; }
-  .header-actions { width: 100%; justify-content: space-between; }
+  .header-inner { grid-template-columns: 1fr; gap: 8px; padding: 10px 14px 12px; }
+  .brand { width: 100%; justify-content: flex-start; }
+  .site-title { grid-column: 1; grid-row: 2; font-size: 16px; }
+  .header-actions { grid-row: 3; width: 100%; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
   .mode-switch { margin-left: auto; }
-  .mode-tab { padding: 7px 15px; }
-  .brand strong { font-size: 15px; }
-  .brand small { font-size: 11px; }
-  .brand-logo { height: 38px; padding: 4px 8px; }
-  .main-content { padding: 18px 14px; }
+  .mode-tab { padding: 9px 16px; min-height: 40px; }
+  .admin-chip { padding: 4px 6px 4px 14px; }
+  .logout-button { min-height: 40px; padding: 8px 14px; }
+  .brand-logo { width: min(165px,100%); height: auto; }
+  .main-content { padding: 18px 14px calc(18px + env(safe-area-inset-bottom)); }
   .hero { min-height: 0; padding: 27px 24px; border-radius: 15px; }
   .hero h1 { font-size: 27px; }
   .location-grid { grid-template-columns: 1fr; }
-  .section-heading { align-items: center; }
+  .section-heading { align-items: flex-start; flex-wrap: wrap; row-gap: 10px; }
+  .section-heading > .refresh-button { flex: 0 0 auto; align-self: center; }
   .section-heading h2 { font-size: 21px; }
-  .content-section { margin-top: 27px; }
+  .section-sub { font-size: 13px; }
+  .content-section { margin-top: 0; }
   .location-card { min-height: 108px; padding: 18px; }
   .state-card, .placeholder { padding: 22px; }
   .form-card, .created-summary { padding: 19px; }
@@ -747,6 +768,105 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
   .verify-actions { flex-direction: column; }
   .verify-actions .primary-button, .verify-actions .danger-button { width: 100%; }
   .reservation-entry { flex-direction: column; }
+  .reservation-entry .status-badge { align-self: flex-start; }
   .approval-actions { width: 100%; }
   .approval-actions button { flex: 1; }
 }
+
+/* ---------------------------------------------------------------------------
+   移动端可用性：触控尺寸、输入框防缩放、卡片与详情排版
+   手机端（≤560px）所有可点元素不小于 44px，表单控件字号不小于 16px，
+   避免 iOS 聚焦时页面被放大；卡片正文与操作按钮分区排布。
+--------------------------------------------------------------------------- */
+/* 操作结果提示（预约成功、审核结论等）在各页面统一成一块浅色提示条 */
+.notice {
+  margin: 14px 0 0;
+  border: 1px solid #cfc2e8;
+  border-radius: 10px;
+  padding: 11px 14px;
+  background: #f2eefb;
+  color: #43326e;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+@media (max-width: 560px) {
+  /* 触控尺寸：按钮、链接按钮、刷新/翻页统一到 44px 高，方便单手点按 */
+  .refresh-button, .retry-button, .primary-button, .danger-button, .nav-button, .mode-tab {
+    min-height: 44px;
+  }
+  .refresh-button, .retry-button { padding: 10px 16px; }
+  .link-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 6px 2px;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+
+  /* 输入控件 16px 起，避免 iOS 聚焦自动放大；下拉框与日期框同高 */
+  .filter-bar input, .filter-bar select,
+  .field input, .field select, .field textarea,
+  .unit-input-row input, .unit-select,
+  .verify-card textarea, .unit-status-select {
+    font-size: 16px;
+    min-height: 46px;
+  }
+  .field textarea { min-height: 74px; }
+
+  /* 筛选条：搜索框独占一行，地点与“只看有库存”并排 */
+  .filter-bar { gap: 10px; }
+  .filter-bar input[type="search"] { flex: 1 1 100%; min-width: 0; }
+  .filter-bar select { flex: 1 1 140px; min-width: 0; max-width: 100%; }
+  .filter-toggle { flex: 0 0 auto; min-height: 44px; padding: 0 2px; }
+
+  /* 物品卡片：卡片底部库存与按钮同一行，按钮保证 44px 高并可换行不挤压 */
+  .items-grid { gap: 14px; }
+  .item-body { padding: 14px 16px 15px; }
+  .item-footer { flex-wrap: wrap; gap: 10px; }
+  .card-book-button { min-height: 44px; padding: 10px 16px; }
+  .stock-text { font-size: 12px; }
+
+  /* 地点总览卡片：收紧留白，名称换行不挤压右侧箭头 */
+  .location-overview-intro { padding: 22px 20px; gap: 16px; }
+  .location-overview-card { min-height: 0; padding: 16px; gap: 13px; }
+  .location-overview-icon { width: 44px; height: 44px; font-size: 17px; border-radius: 10px; }
+  .location-overview-body strong { font-size: 16px; }
+  .location-overview-arrow { flex: 0 0 auto; font-size: 20px; }
+  .location-overview-summary { gap: 6px 16px; font-size: 12px; }
+
+  /* 预约详情/规则表：移动端改为标签在上、值在下的单列，避免标签被挤成竖排 */
+  .rule-list div { flex-direction: column; align-items: flex-start; gap: 4px; padding: 11px 0; }
+  .rule-list dt { font-size: 12px; }
+  .rule-list dd { text-align: left; font-weight: 600; }
+
+  .modal-desc, .booking-help { font-size: 13px; line-height: 1.75; }
+  .badge-row { gap: 6px; }
+  .status-badge { padding: 4px 10px; }
+}
+
+.location-overview-photo{width:90px;height:80px;flex:0 0 auto;object-fit:cover;border-radius:10px}
+@media(max-width:600px){.location-overview-photo{width:70px;height:68px}}
+
+.announcement-button{display:grid;place-items:center;width:38px;height:38px;border:1px solid #ffffff35;border-radius:50%;background:#ffffff14;color:#fff}.announcement-button:hover,.announcement-button[aria-pressed="true"]{background:#ffffff30}.announcement-button svg{width:19px;height:19px}
+
+/* 当前标签与下方内容形成一体的页面卡片 */
+.workspace-strip{position:relative;z-index:2;min-width:0;margin:0 0 -1px;padding:0 12px}
+.page-tabs{display:flex;align-items:flex-end;gap:5px;min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;padding:0;margin-bottom:-1px}
+.page-tabs::-webkit-scrollbar{display:none}
+.page-tab{display:flex;align-items:center;flex:0 0 auto;min-width:0;border:1px solid #e7e1ef;border-bottom:0;border-radius:12px 12px 0 0;background:#ece8f4;color:#7a6d90;transition:background .15s,color .15s}
+.page-tab:hover{background:#f5f1fa;color:#4b376c}.page-tab.active{position:relative;background:#fff;border-color:#e4ddef;color:#4a3374}
+.page-tab.active::after{position:absolute;left:0;right:0;bottom:0;height:2px;background:#fff;content:""}
+.page-tab-label,.page-tab-close{border:0;background:transparent;color:inherit;font:inherit}.page-tab-label{padding:11px 3px 11px 15px;font-size:13px;font-weight:650;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.page-tab-close{display:grid;place-items:center;width:32px;height:38px;font-size:17px;line-height:1;border-radius:8px}.page-tab-close:hover{color:#3f2d6c;background:#e9e2f2}
+.workspace-page{display:flex;flex-direction:column;min-width:0;min-height:calc(100vh - 210px);padding:30px;border:1px solid #e4ddef;border-radius:0 16px 16px 16px;background:#fff;box-shadow:0 8px 28px #241b3d0a}
+.section-heading h1{margin:0;line-height:1.3}.content-section > .section-sub{margin-bottom:16px}
+@media(max-width:560px){.workspace-strip{padding:0 7px}.page-tab-label{max-width:120px;padding:10px 2px 10px 11px}.page-tab-close{width:30px;min-height:38px}.workspace-page{min-height:0;padding:18px 14px;border-radius:0 12px 12px 12px}}
+
+/* 内容不足一屏时分页靠近卡片底端，内容较多时自然排在列表之后 */
+.workspace-page > .content-section,.workspace-page > .my-page{display:flex;flex-direction:column;flex:1;min-height:0}
+.my-page > .content-section{display:flex;flex-direction:column;flex:1;min-height:0}
+.pagination-bar{display:flex;align-items:center;justify-content:center;gap:14px;margin:auto 0 0;padding-top:24px;color:#817695;font-size:12px;line-height:1.4}
+.pagination-bar .refresh-button{min-height:32px;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600}
+@media(max-width:560px){.pagination-bar{gap:9px;padding-top:20px;flex-wrap:wrap}.pagination-bar .refresh-button{min-height:36px;padding:7px 10px}}

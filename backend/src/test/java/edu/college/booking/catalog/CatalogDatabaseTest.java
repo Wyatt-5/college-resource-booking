@@ -54,6 +54,23 @@ class CatalogDatabaseTest {
                 .contentType("application/json").content(body(place,name))).andExpect(status().isCreated())
                 .andExpect(header().exists("Location")).andReturn().getResponse().getContentAsString()).get("id").asLong();
     }
+    @Test void archivePreservesHistoryAndBlocksUnfinishedBookings() throws Exception {
+        long item = create(location, "需要移除的物品");
+        long applicant = db.queryForObject("INSERT INTO users(login_name,display_name,password_hash) VALUES (?, '测试用户', 'hash') RETURNING id", Long.class, "archive-" + UUID.randomUUID());
+        long reservation = db.queryForObject("""
+                INSERT INTO reservations(applicant_id, resource_type, item_id, start_at, end_at, purpose, quantity, status, idempotency_key, payload_hash)
+                VALUES (?, 'ITEM', ?, CURRENT_TIMESTAMP + INTERVAL '1 hour', CURRENT_TIMESTAMP + INTERVAL '2 hours', '测试', 1, 'PENDING_APPROVAL', ?, 'hash') RETURNING id
+                """, Long.class, applicant, item, UUID.randomUUID().toString());
+        mvc.perform(delete("/api/v1/items/"+item).with(user("ordinary-user"))).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/v1/items/"+item).with(admin())).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ITEM_IN_USE"));
+        db.update("UPDATE reservations SET status='CANCELLED' WHERE id=?", reservation);
+        mvc.perform(delete("/api/v1/items/"+item).with(admin())).andExpect(status().isNoContent());
+        mvc.perform(get("/api/v1/items/"+item)).andExpect(status().isNotFound());
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM reservations WHERE id=? AND item_id=?", Integer.class, reservation, item));
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM items WHERE id=? AND archived_at IS NULL", Integer.class, item));
+        mvc.perform(get("/api/v1/items").with(admin()).param("scope","managed").param("keyword","需要移除的物品"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+    }
     @Test void createReplayPartialPatchAndAudit()throws Exception{
         String payload=body(location,"相机"),key=UUID.randomUUID().toString();
         String result=mvc.perform(post("/api/v1/items").with(admin()).header("Idempotency-Key",key).contentType("application/json").content(payload))
@@ -207,22 +224,22 @@ class CatalogDatabaseTest {
     @Test void returnAcceptanceIsIdempotentAndRejectKeepsStockOccupied()throws Exception{
         long item=create(location,"待归还相机");
         long unit=db.queryForObject("INSERT INTO item_units(item_id,unit_code,status) VALUES (?,'RETURN-1','RETURN_SUBMITTED') RETURNING id",Long.class,item);
-        var photos=List.of(new ItemImage(1,item,"现场.png","/protected-return-photo"));
-        var record=new ReservationReturnGateway.ReturnRecord(9001,item,"待归还相机",location,List.of(unit),"RETURN-1","测试借用人",java.time.Instant.now(),"",photos,"RETURN_SUBMITTED");
+        var photos=List.of(new ReservationReturnGateway.ReturnPhoto(1,"现场.png","/protected-return-photo"));
+        var record=new ReservationReturnGateway.ReturnRecord(9001,item,"待归还相机",location,List.of(unit),List.of("RETURN-1"),"测试借用人",java.time.Instant.now(),"",photos,"RETURN_SUBMITTED");
         given(returns.lock(9001)).willReturn(record);
         mvc.perform(post("/api/v1/reservations/9001/return-verification").with(admin()).header("Idempotency-Key","reject-missing-reason")
                 .contentType("application/json").content("{\"decision\":\"REJECT\"}"))
           .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.reason").exists());
         mvc.perform(post("/api/v1/reservations/9001/return-verification").with(admin()).header("Idempotency-Key","reject")
                 .contentType("application/json").content("{\"decision\":\"REJECT\",\"reason\":\"配件未还\"}"))
-          .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("RETURN_REJECTED"));
+          .andExpect(status().isOk()).andExpect(jsonPath("$.handoverStatus").value("RETURN_REJECTED"));
         assertEquals("RETURN_SUBMITTED",db.queryForObject("SELECT status FROM item_units WHERE id=?",String.class,unit));
         for(int i=0;i<2;i++)mvc.perform(post("/api/v1/reservations/9001/return-verification").with(admin()).header("Idempotency-Key","accept")
                 .contentType("application/json").content("{\"decision\":\"ACCEPT\"}"))
-          .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("COMPLETED"));
+          .andExpect(status().isOk()).andExpect(jsonPath("$.handoverStatus").value("COMPLETED"));
         assertEquals("AVAILABLE",db.queryForObject("SELECT status FROM item_units WHERE id=?",String.class,unit));
         org.mockito.Mockito.verify(returns,org.mockito.Mockito.times(1)).finish(9001,"COMPLETED","catalog-test-admin","");
-        given(returns.lock(9001)).willReturn(new ReservationReturnGateway.ReturnRecord(9001,item,"待归还相机",location,List.of(unit),"RETURN-1","测试借用人",java.time.Instant.now(),"",photos,"COMPLETED"));
+        given(returns.lock(9001)).willReturn(new ReservationReturnGateway.ReturnRecord(9001,item,"待归还相机",location,List.of(unit),List.of("RETURN-1"),"测试借用人",java.time.Instant.now(),"",photos,"COMPLETED"));
         mvc.perform(post("/api/v1/reservations/9001/return-verification").with(admin()).header("Idempotency-Key","another-click")
                 .contentType("application/json").content("{\"decision\":\"ACCEPT\"}"))
           .andExpect(status().isConflict());

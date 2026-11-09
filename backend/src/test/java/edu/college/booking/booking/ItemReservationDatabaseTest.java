@@ -32,6 +32,7 @@ import tools.jackson.databind.ObjectMapper;
 @AutoConfigureMockMvc
 @EnabledIfEnvironmentVariable(named = "CATALOG_DB_TEST", matches = "true")
 class ItemReservationDatabaseTest {
+    @Autowired edu.college.booking.auth.AccountUserDetailsService loginDetails;
     @Autowired JdbcTemplate db;
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
@@ -79,40 +80,96 @@ class ItemReservationDatabaseTest {
     }
 
     @Test
-    void valuableReviewIsRealSingleReviewerAndChecksCapacity() throws Exception {
+    void valuableReviewIsSingleReviewerAndReviewerChoosesApplicant() throws Exception {
         db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
         db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
-        String payload=body(start,end);
-        String created=mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
-                .header("Idempotency-Key","valuable-review-1").contentType("application/json").content(payload))
-                .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("PENDING_APPROVAL"))
-                .andReturn().getResponse().getContentAsString();
-        long id=json.readTree(created).get("id").asLong();
-        String second=mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
-                .header("Idempotency-Key","valuable-review-2").contentType("application/json").content(payload))
-                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
-        long secondReservation=json.readTree(second).get("id").asLong();
-        mvc.perform(get("/api/v1/review/reservations").with(user(secondLogin)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].id").value(id));
-        mvc.perform(patch("/api/v1/reservations/"+secondReservation+"/review").with(user(secondLogin)).with(csrf())
-                .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EARLIER_REQUEST_PENDING"));
-        mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(firstLogin)).with(csrf())
+        long id=create(firstLogin,"valuable-review-1");
+        long secondReservation=create(firstLogin,"valuable-review-2");
+        mvc.perform(get("/api/v1/review/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].id").value(id))
+                .andExpect(jsonPath("$.content[0].competingPending").value(1))
+                .andExpect(jsonPath("$.content[0].priorityTier").value("STANDARD"));
+        mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf())
                 .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SELF_APPROVAL_FORBIDDEN"));
-        mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(secondLogin)).with(csrf())
+        // 审核人可以越过更早的待审申请，选择后面的申请人
+        mvc.perform(patch("/api/v1/reservations/"+secondReservation+"/review").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
                 .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CONFIRMED"));
-        mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(secondLogin)).with(csrf())
-                .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("INVALID_STATE"));
-        mvc.perform(patch("/api/v1/reservations/"+secondReservation+"/review").with(user(secondLogin)).with(csrf())
+        // 名额已被占用，较早的申请不能再被批准
+        mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
                 .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("RESOURCE_CONFLICT"));
-        mvc.perform(patch("/api/v1/reservations/"+secondReservation+"/review").with(user(secondLogin)).with(csrf())
+        mvc.perform(patch("/api/v1/reservations/"+secondReservation+"/review").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
+                .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("INVALID_STATE"));
+        mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
                 .contentType("application/json").content("{\"decision\":\"REJECT\",\"reason\":\"时段冲突\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"));
+        assertEquals(secondId,db.queryForObject("SELECT reviewed_by FROM reservations WHERE id=?",Long.class,secondReservation));
+        assertEquals("APPROVED",db.queryForObject("SELECT decision FROM reservations WHERE id=?",String.class,secondReservation));
+        assertEquals("NOT_PICKED_UP",db.queryForObject("SELECT handover_status FROM reservations WHERE id=?",String.class,secondReservation));
+        assertEquals("REJECTED",db.queryForObject("SELECT decision FROM reservations WHERE id=?",String.class,id));
+        assertEquals("时段冲突",db.queryForObject("SELECT decision_reason FROM reservations WHERE id=?",String.class,id));
         assertEquals(2L,db.queryForObject("SELECT count(*) FROM audit_logs WHERE action='RESERVATION_REVIEWED' AND target_type='RESERVATION' AND target_id IN (?,?)",Long.class,id,secondReservation));
+    }
+
+    @Test
+    void pastPendingRequestsAreExcludedFromReviewQueue() throws Exception {
+        db.update("UPDATE items SET is_valuable=true WHERE id=?", itemId);
+        db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)", secondId);
+        long oldId = create(firstLogin, "past-review-1");
+        db.update("UPDATE reservations SET start_at=CURRENT_TIMESTAMP - INTERVAL '2 hours', end_at=CURRENT_TIMESTAMP - INTERVAL '1 hour' WHERE id=?", oldId);
+        long activeId = create(firstLogin, "active-review-1");
+        mvc.perform(get("/api/v1/review/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(activeId));
+        assertEquals("PENDING_APPROVAL", db.queryForObject("SELECT status FROM reservations WHERE id=?", String.class, oldId));
+    }
+
+    @Test
+    void reservationLogShowsReviewerAndDecision() throws Exception {
+        db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
+        db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
+        db.update("INSERT INTO role_grants(user_id,role) VALUES (?,'SYSTEM_ADMIN')",secondId);
+        try {
+            long id=create(firstLogin,"log-review-1");
+            mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
+                    .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
+                    .andExpect(status().isOk());
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                    .param("itemId",Long.toString(itemId)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content[0].reviewerName").value("测试乙"))
+                    .andExpect(jsonPath("$.content[0].decision").value("APPROVED"))
+                    .andExpect(jsonPath("$.content[0].reviewedAt").isString());
+        } finally { db.update("DELETE FROM role_grants WHERE user_id=?",secondId); }
+    }
+
+    @Test
+    void concurrentApprovalKeepsExactlyOneDecision() throws Exception {
+        db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
+        db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
+        long id=create(firstLogin,"concurrent-review-1");
+        CountDownLatch ready=new CountDownLatch(2);
+        CountDownLatch go=new CountDownLatch(1);
+        try (var pool=Executors.newFixedThreadPool(2)) {
+            var tasks=java.util.stream.IntStream.range(0,2).mapToObj(index->pool.submit(()->{
+                ready.countDown(); go.await();
+                try {
+                    service.review(new UsernamePasswordAuthenticationToken(secondLogin,"test",List.of()),id,
+                            new ItemReservationService.ReviewRequest("APPROVE",""));
+                    return "OK";
+                } catch (ApiProblem problem) { return problem.code(); }
+            })).toList();
+            ready.await(); go.countDown();
+            List<String> outcomes=new java.util.ArrayList<>();
+            for (var task:tasks) outcomes.add(task.get());
+            assertEquals(1,java.util.Collections.frequency(outcomes,"OK"));
+            assertEquals(1,java.util.Collections.frequency(outcomes,"INVALID_STATE"));
+            assertEquals(1L,db.queryForObject("SELECT count(*) FROM reservations WHERE id=? AND status='CONFIRMED' AND reviewed_by=?",Long.class,id,secondId));
+            assertEquals(1L,db.queryForObject("SELECT count(*) FROM audit_logs WHERE action='RESERVATION_REVIEWED' AND target_id=?",Long.class,id));
+        }
     }
 
     String body(Instant from, Instant to) {
@@ -121,39 +178,49 @@ class ItemReservationDatabaseTest {
                 "purpose", "学院活动", "quantity", 1));
     }
 
+    long create(String login, String key) throws Exception {
+        String created = mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(login))).with(csrf())
+                .header("Idempotency-Key", key).contentType("application/json").content(body(start, end)))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        return json.readTree(created).get("id").asLong();
+    }
+
     @Test
     void loginRequiredIdempotentAndValuableNeedsApproval() throws Exception {
         String payload = body(start, end);
         mvc.perform(post("/api/v1/reservations").with(csrf()).header("Idempotency-Key", "booking-key-1")
                 .contentType("application/json").content(payload)).andExpect(status().isUnauthorized());
-        mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).header("Idempotency-Key", "booking-key-1")
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(firstLogin))).header("Idempotency-Key", "booking-key-1")
                 .contentType("application/json").content(payload)).andExpect(status().isForbidden());
-        String created = mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
+        String created = mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf())
                 .header("Idempotency-Key", "booking-key-1").contentType("application/json").content(payload))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("CONFIRMED"))
                 .andExpect(jsonPath("$.submissionSeq").isNumber())
                 .andReturn().getResponse().getContentAsString();
         long id = json.readTree(created).get("id").asLong();
-        mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
+        assertEquals("AUTO_CONFIRMED",
+                db.queryForObject("SELECT decision FROM reservations WHERE id=?", String.class, id));
+        assertNull(db.queryForObject("SELECT reviewed_by FROM reservations WHERE id=?", Long.class, id));
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf())
                 .header("Idempotency-Key", "booking-key-1").contentType("application/json").content(payload))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(id));
-        mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf())
                 .header("Idempotency-Key", "booking-key-1").contentType("application/json")
                 .content(body(start.plusSeconds(60), end.plusSeconds(60))))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("IDEMPOTENCY_CONFLICT"));
-        mvc.perform(post("/api/v1/reservations").with(user(secondLogin)).with(csrf())
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
                 .header("Idempotency-Key", "booking-key-2").contentType("application/json").content(payload))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("RESOURCE_CONFLICT"));
-        mvc.perform(get("/api/v1/me/reservations").with(user(firstLogin)))
+        mvc.perform(get("/api/v1/me/reservations").with(user(loginDetails.loadUserByUsername(firstLogin))))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].id").value(id));
-        mvc.perform(get("/api/v1/me/reservations").with(user(secondLogin)))
+        mvc.perform(get("/api/v1/me/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))))
                 .andExpect(jsonPath("$.totalElements").value(0));
         db.update("UPDATE items SET is_valuable=true WHERE id=?", itemId);
-        mvc.perform(post("/api/v1/reservations").with(user(secondLogin)).with(csrf())
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
                 .header("Idempotency-Key", "booking-key-3").contentType("application/json").content(payload))
                 .andExpect(status().isConflict());
-        mvc.perform(post("/api/v1/reservations").with(user(secondLogin)).with(csrf())
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
                 .header("Idempotency-Key", "booking-key-4").contentType("application/json").content(body(end,end.plus(1,ChronoUnit.HOURS))))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("PENDING_APPROVAL"));
     }
@@ -193,10 +260,10 @@ class ItemReservationDatabaseTest {
         var day = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")).plusDays(1);
         Instant from = day.atTime(23,0).atZone(java.time.ZoneId.of("Asia/Shanghai")).toInstant();
         Instant to = from.plus(3,ChronoUnit.HOURS);
-        mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf())
                 .header("Idempotency-Key","invalid-minute-test").contentType("application/json")
                 .content(body(from.plusSeconds(60),to))).andExpect(status().isBadRequest());
-        mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf())
                 .header("Idempotency-Key","overnight-test-1").contentType("application/json")
                 .content(body(from,to))).andExpect(status().isCreated());
         mvc.perform(get("/api/v1/items/"+itemId+"/availability").param("date",day.plusDays(1).toString()))
@@ -205,7 +272,7 @@ class ItemReservationDatabaseTest {
                 .andExpect(jsonPath("$.slots[1].reserved").value(1))
                 .andExpect(jsonPath("$.slots[2].available").value(1))
                 .andExpect(jsonPath("$.slots[0].applicantId").doesNotExist());
-        mvc.perform(post("/api/v1/reservations").with(user(secondLogin)).with(csrf())
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
                 .header("Idempotency-Key","overnight-test-2").contentType("application/json")
                 .content(body(from.minus(2,ChronoUnit.HOURS),to.plus(2,ChronoUnit.HOURS))))
                 .andExpect(status().isConflict());
@@ -215,12 +282,12 @@ class ItemReservationDatabaseTest {
     void sequentialBookingsUsePeakCapacityNotSumAcrossTheWholeRange() throws Exception {
         db.update("INSERT INTO item_units(item_id,unit_code,status) VALUES (?,?,'AVAILABLE')",itemId,"PEAK-"+UUID.randomUUID());
         for(int hour=0;hour<2;hour++) {
-            mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
+            mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf())
                     .header("Idempotency-Key","sequential-test-"+hour).contentType("application/json")
                     .content(body(start.plus(hour,ChronoUnit.HOURS),start.plus(hour+1,ChronoUnit.HOURS))))
                     .andExpect(status().isCreated());
         }
-        mvc.perform(post("/api/v1/reservations").with(user(secondLogin)).with(csrf())
+        mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
                 .header("Idempotency-Key","sequential-spanning-test").contentType("application/json")
                 .content(body(start,start.plus(2,ChronoUnit.HOURS)))).andExpect(status().isCreated());
     }
@@ -229,22 +296,22 @@ class ItemReservationDatabaseTest {
     void ownerCanCancelAndManagerCanReadBookingLog() throws Exception {
         db.update("INSERT INTO role_grants(user_id,role) VALUES (?,'SYSTEM_ADMIN')",secondId);
         try {
-            String created=mvc.perform(post("/api/v1/reservations").with(user(firstLogin)).with(csrf())
+            String created=mvc.perform(post("/api/v1/reservations").with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf())
                     .header("Idempotency-Key","cancel-test-1").contentType("application/json")
                     .content(body(start,end))).andExpect(status().isCreated())
                     .andReturn().getResponse().getContentAsString();
             long id=json.readTree(created).get("id").asLong();
-            mvc.perform(get("/api/v1/management/reservations").with(user(secondLogin)))
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].applicantName").isString());
-            mvc.perform(get("/api/v1/management/reservations").with(user(secondLogin)).param("itemId",Long.toString(itemId)))
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))).param("itemId",Long.toString(itemId)))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1));
-            mvc.perform(delete("/api/v1/me/reservations/"+id).with(user(secondLogin)).with(csrf()))
+            mvc.perform(delete("/api/v1/me/reservations/"+id).with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf()))
                     .andExpect(status().isForbidden());
-            mvc.perform(delete("/api/v1/me/reservations/"+id).with(user(firstLogin)).with(csrf()))
+            mvc.perform(delete("/api/v1/me/reservations/"+id).with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf()))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CANCELLED"));
-            mvc.perform(delete("/api/v1/me/reservations/"+id).with(user(firstLogin)).with(csrf()))
+            mvc.perform(delete("/api/v1/me/reservations/"+id).with(user(loginDetails.loadUserByUsername(firstLogin))).with(csrf()))
                     .andExpect(status().isConflict());
-            mvc.perform(get("/api/v1/management/reservations").with(user(secondLogin)).param("itemId",Long.toString(itemId)))
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))).param("itemId",Long.toString(itemId)))
                     .andExpect(jsonPath("$.content[0].status").value("CANCELLED"));
         } finally { db.update("DELETE FROM role_grants WHERE user_id=?",secondId); }
     }

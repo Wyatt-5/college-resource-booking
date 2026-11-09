@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.*;
 public class ReturnVerificationController {
     private final ReturnVerificationService service;
     public ReturnVerificationController(ReturnVerificationService service){this.service=service;}
-    @GetMapping(value="/api/v1/reservations",params="status=RETURN_SUBMITTED")
+    @GetMapping(value="/api/v1/reservations",params="handoverStatus=RETURN_SUBMITTED")
     public List<ReservationReturnGateway.ReturnRecord> queue(@RequestParam(defaultValue="0") int page,@RequestParam(defaultValue="20") int size){
         return service.queue(page,size);
     }

@@ -73,7 +73,7 @@ class SpaceDatabaseTest {
     }
 
     @Test
-    void enforcesHoursWeekAndCounselorPriorityWithRealApproval() {
+    void enforcesHoursWeekAndLetsReviewerChooseBetweenCounselorAndStudent() {
         assertThrows(ApiProblem.class, () -> reservations.create(auth(studentLogin), request(tomorrow, 7, 8), "space-invalid-7"));
         assertThrows(ApiProblem.class, () -> reservations.create(auth(studentLogin), request(tomorrow, 21, 23), "space-invalid-23"));
         assertThrows(ApiProblem.class, () -> reservations.create(auth(studentLogin), request(tomorrow.plusDays(7), 8, 9), "space-invalid-week"));
@@ -83,17 +83,44 @@ class SpaceDatabaseTest {
         ItemReservation counselor = reservations.create(auth(counselorLogin), request(tomorrow, 21, 22), "space-counselor-1");
         assertEquals("PENDING_APPROVAL", student.status());
         assertEquals("PENDING_APPROVAL", counselor.status());
-        assertThrows(ApiProblem.class, () -> reservations.review(auth(reviewerLogin), student.id(),
-                new ItemReservationService.ReviewRequest("APPROVE", "")));
+
+        // 申请按提交顺序展示，审核人可以选择其中一条
+        var queue = reservations.pending(auth(reviewerLogin), 0, 50).content();
+        var counselorEntry = queue.stream().filter(entry -> entry.id() == counselor.id()).findFirst().orElseThrow();
+        var studentEntry = queue.stream().filter(entry -> entry.id() == student.id()).findFirst().orElseThrow();
+        assertEquals("STANDARD", counselorEntry.priorityTier());
+        assertEquals("STANDARD", studentEntry.priorityTier());
+        assertEquals(1, studentEntry.competingPending());
+
         assertThrows(ApiProblem.class, () -> reservations.review(auth(counselorLogin), counselor.id(),
                 new ItemReservationService.ReviewRequest("APPROVE", "")));
-        assertEquals("CONFIRMED", reservations.review(auth(reviewerLogin), counselor.id(),
+        // 审核人可以选择其中一条申请
+        assertEquals("CONFIRMED", reservations.review(auth(reviewerLogin), student.id(),
                 new ItemReservationService.ReviewRequest("APPROVE", "")).status());
         assertEquals("CONFIRMED", spaces.slots(spaceId, tomorrow).stream()
                 .filter(slot -> slot.hour() == 21).findFirst().orElseThrow().status());
-        assertThrows(ApiProblem.class, () -> reservations.review(auth(reviewerLogin), student.id(),
+        ApiProblem occupied = assertThrows(ApiProblem.class, () -> reservations.review(auth(reviewerLogin), counselor.id(),
                 new ItemReservationService.ReviewRequest("APPROVE", "")));
+        assertEquals("RESOURCE_CONFLICT", occupied.code());
         assertThrows(ApiProblem.class, () -> reservations.create(auth(studentLogin), request(tomorrow, 21, 22), "space-student-2"));
+    }
+
+    @Test
+    void editAndRemoveRequirePermissionAndPreserveReservationHistory() {
+        assertThrows(ApiProblem.class, () -> spaces.update(auth(studentLogin), spaceId,
+                new SpaceService.SpaceInput("无权限", "", 10)));
+        var updated = spaces.update(auth(reviewerLogin), spaceId,
+                new SpaceService.SpaceInput("更新后的地点", "新介绍", 36));
+        assertEquals("更新后的地点", updated.name());
+        assertEquals(36, updated.capacity());
+        var reservation = reservations.create(auth(studentLogin), request(tomorrow, 9, 10), "space-removal-test");
+        ApiProblem busy = assertThrows(ApiProblem.class, () -> spaces.remove(auth(reviewerLogin), spaceId));
+        assertEquals("SPACE_IN_USE", busy.code());
+        db.update("UPDATE reservations SET status='CANCELLED' WHERE id=?", reservation.id());
+        spaces.remove(auth(reviewerLogin), spaceId);
+        assertTrue(spaces.list().stream().noneMatch(space -> space.id() == spaceId));
+        assertEquals("INACTIVE", spaces.required(spaceId, false).status());
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM reservations WHERE id=? AND space_id=?", Integer.class, reservation.id(), spaceId));
     }
 
     @Test

@@ -1,178 +1,55 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import {
-  createItem,
-  deleteItemImage,
-  FALLBACK_LOCATIONS,
-  getLocations,
-  uploadItemImage,
-  MANAGEMENT_DEMO,
-} from '../lib/api'
-
-const MAX_PHOTOS = 6
-const MAX_PHOTO_SIZE = 5 * 1024 * 1024
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { createItem, getLocations, uploadItemImage, MANAGEMENT_DEMO, FALLBACK_LOCATIONS } from '../lib/api'
+import { createRequestKey } from '../lib/requestKey'
+const MAX_PHOTOS = 6, MAX_PHOTO_SIZE = 5 * 1024 * 1024
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
-
 const steps = ['基本信息与库存', '展示照片']
 const emit = defineEmits(['created', 'busy-change'])
-
-function emptyForm() {
-  return {
-    name: '',
-    locationId: '',
-    description: '',
-    isValuable: false,
-    status: 'ACTIVE',
-    initialStock: 1,
-    rules: { maxBorrowDays: 7, advanceDays: 14 },
-  }
-}
-
-const form = ref(emptyForm())
-const createdItem = ref(null)
-const submitting = ref(false)
-const submitError = ref('')
-const fieldErrors = ref({})
-// 防重复提交：一次表单会话一个 key，完成上架后重新生成
-const idempotencyKey = ref(crypto.randomUUID())
-const finishMessage = ref('')
-
-const locations = ref([])
-const locationsError = ref('')
-
-const images = ref([])
-const photoError = ref('')
-const fileInput = ref(null)
+const form = ref({ name:'', locationId:'', description:'', isValuable:false, status:'ACTIVE', initialStock:1, rules:{maxBorrowDays:7,advanceDays:14} })
+const step = ref(0), createdItem = ref(null), submitting = ref(false), submitError = ref(''), fieldErrors = ref({})
+const locations = ref([]), locationsError = ref(''), images = ref([]), photoError = ref(''), fileInput = ref(null)
+const idempotencyKey = createRequestKey()
 let localImageSeq = 0
-watch(() => submitting.value || images.value.some(image => image.uploading), busy => emit('busy-change', busy), { immediate: true })
-
-
-const statusEnabled = computed({
-  get: () => form.value.status === 'ACTIVE',
-  set: (enabled) => {
-    form.value.status = enabled ? 'ACTIVE' : 'INACTIVE'
-  },
-})
-
-// 基本信息与库存同一次保存，照片上传是第二步。
-function stepClass(index) {
-  if (!createdItem.value) return index === 0 ? 'active' : ''
-  if (index === 0) return 'done'
-  return images.value.length ? 'done' : 'active'
-}
-
-function locationName(locationId) {
-  const match = locations.value.find((item) => item.id === Number(locationId))
-  return match?.name ?? `地点 ${locationId}`
-}
-
+watch(submitting, busy => emit('busy-change', busy), { immediate:true })
+const statusEnabled = computed({get:()=>form.value.status==='ACTIVE',set:enabled=>{form.value.status=enabled?'ACTIVE':'INACTIVE'}})
+function stepClass(index) { return index === step.value ? 'active' : index < step.value ? 'done' : '' }
+function locationName(id) { return locations.value.find(location => location.id === Number(id))?.name ?? `地点 ${id}` }
 async function loadLocations() {
-  locationsError.value = ''
-  try {
-    locations.value = (await getLocations()).filter(location => location.status === 'ACTIVE')
-  } catch {
-    // 后端未启动时使用兜底模拟地点，保证上架表单可以离线演示
-    locations.value = MANAGEMENT_DEMO ? FALLBACK_LOCATIONS : []
-    locationsError.value = MANAGEMENT_DEMO ? '当前显示演示地点。' : '地点读取失败，请启动后端后重试，不能使用示例地点上架。'
-  }
+  try { locations.value=(await getLocations()).filter(location=>location.status==='ACTIVE'); locationsError.value='' }
+  catch { locations.value=MANAGEMENT_DEMO?FALLBACK_LOCATIONS:[]; locationsError.value='地点读取失败，请检查网络后重试。' }
 }
-
-async function submitBasic() {
-  finishMessage.value = ''
-  submitError.value = ''
-  fieldErrors.value = {}
-
-  if (!form.value.name.trim()) fieldErrors.value.name = '请输入物品名称'
-  if (!form.value.locationId) fieldErrors.value.locationId = '请选择归属地点'
-  if (!Number.isInteger(form.value.initialStock) || form.value.initialStock < 0 || form.value.initialStock > 500) fieldErrors.value.initialStock = '请输入0至500的整数'
-  if (Object.keys(fieldErrors.value).length > 0) return
-
-  submitting.value = true
-  try {
-    const payload = {
-      ...form.value,
-      name: form.value.name.trim(),
-      locationId: Number(form.value.locationId),
-    }
-    createdItem.value = await createItem(payload, { idempotencyKey: idempotencyKey.value })
-  } catch (cause) {
-    if (cause.code === 'VALIDATION_ERROR' && cause.details) {
-      fieldErrors.value = cause.details
-    }
-    submitError.value = cause.message || '保存失败，请稍后重试。'
-  } finally {
-    submitting.value = false
-  }
+function submitBasic() {
+  submitError.value='';fieldErrors.value={}
+  if(!form.value.name.trim())fieldErrors.value.name='请输入物品名称'
+  if(!form.value.locationId)fieldErrors.value.locationId='请选择归属地点'
+  if(!Number.isInteger(form.value.initialStock)||form.value.initialStock<0||form.value.initialStock>500)fieldErrors.value.initialStock='请输入0至500的整数'
+  if(Object.keys(fieldErrors.value).length===0)step.value=1
 }
-
 function onPickPhotos(event) {
-  photoError.value = ''
-  const files = Array.from(event.target.files ?? [])
-  event.target.value = ''
-  if (files.length === 0) return
-  if (images.value.length + files.length > MAX_PHOTOS) {
-    photoError.value = `最多上传 ${MAX_PHOTOS} 张照片。`
-    return
-  }
-  for (const file of files) {
-    if (!ACCEPTED_TYPES.includes(file.type)) {
-      photoError.value = `「${file.name}」格式不支持，仅限 JPG / PNG / WebP。`
-      continue
-    }
-    if (file.size > MAX_PHOTO_SIZE) {
-      photoError.value = `「${file.name}」超过 5MB，请压缩后再传。`
-      continue
-    }
-    uploadPhoto(file)
+  photoError.value='';const files=Array.from(event.target.files??[]);event.target.value=''
+  if(images.value.length+files.length>MAX_PHOTOS){photoError.value=`最多上传 ${MAX_PHOTOS} 张照片。`;return}
+  for(const file of files){
+    if(!ACCEPTED_TYPES.includes(file.type)){photoError.value=`「${file.name}」格式不支持，仅限 JPG / PNG / WebP。`;continue}
+    if(file.size>MAX_PHOTO_SIZE){photoError.value=`「${file.name}」超过 5MB，请压缩后再传。`;continue}
+    images.value.push({localId:++localImageSeq,file,previewUrl:URL.createObjectURL(file),fileName:file.name,uploaded:false})
   }
 }
-
-async function uploadPhoto(file) {
-  const entry = reactive({
-    localId: (localImageSeq += 1),
-    previewUrl: URL.createObjectURL(file),
-    fileName: file.name,
-    uploading: true,
-  })
-  images.value.push(entry)
+function removePhoto(image){if(createdItem.value && image.uploaded){photoError.value='已上传的照片请在库存管理中编辑。';return} URL.revokeObjectURL(image.previewUrl);images.value=images.value.filter(entry=>entry!==image)}
+async function finish() {
+  if(submitting.value)return
+  submitting.value=true;submitError.value='';photoError.value=''
   try {
-    const saved = await uploadItemImage(createdItem.value.id, file)
-    entry.id = saved.id
-  } catch (cause) {
-    photoError.value = `「${file.name}」上传失败：${cause.message}`
-    images.value = images.value.filter((item) => item !== entry)
-    URL.revokeObjectURL(entry.previewUrl)
-  } finally {
-    entry.uploading = false
-  }
+    if(!createdItem.value)createdItem.value=await createItem({...form.value,name:form.value.name.trim(),locationId:Number(form.value.locationId)},{idempotencyKey})
+    for(const image of images.value){if(!image.uploaded){await uploadItemImage(createdItem.value.id,image.file);image.uploaded=true}}
+    emit('created')
+  }catch(cause){
+    if(!createdItem.value && cause.code==='VALIDATION_ERROR' && cause.details){fieldErrors.value=cause.details;step.value=0}
+    submitError.value=createdItem.value ? `物品已保存，但照片上传未完成：${cause.message}。可重试；关闭后可在库存管理中继续添加照片。` : (cause.message||'保存失败，请重试。')
+  }finally{submitting.value=false}
 }
-
-async function removePhoto(image) {
-  if (image.id != null) {
-    try {
-      await deleteItemImage(createdItem.value.id, image.id)
-    } catch (cause) {
-      photoError.value = `移除照片失败：${cause.message}`
-      return
-    }
-  }
-  URL.revokeObjectURL(image.previewUrl)
-  images.value = images.value.filter((item) => item !== image)
-}
-
-function resetAll() {
-  if (images.value.some(image => image.uploading)) return
-  for (const image of images.value) URL.revokeObjectURL(image.previewUrl)
-  finishMessage.value = `「${createdItem.value.name}」上架完成，共 ${images.value.length} 张照片、${createdItem.value.unitSummary.total} 件实物。`
-  form.value = emptyForm()
-  createdItem.value = null
-  images.value = []
-  idempotencyKey.value = crypto.randomUUID()
-  emit('created')
-}
-
 onMounted(loadLocations)
-onUnmounted(() => { for (const image of images.value) URL.revokeObjectURL(image.previewUrl) })
+onUnmounted(()=>{for(const image of images.value)URL.revokeObjectURL(image.previewUrl)})
 </script>
 
 <template>
@@ -183,10 +60,10 @@ onUnmounted(() => { for (const image of images.value) URL.revokeObjectURL(image.
       </li>
     </ol>
 
-    <p v-if="finishMessage" class="success-banner" role="status">{{ finishMessage }}</p>
+
 
     <!-- 第一步：基本信息 -->
-    <form v-if="!createdItem" class="form-card" novalidate @submit.prevent="submitBasic">
+    <form v-if="step === 0" class="form-card" novalidate @submit.prevent="submitBasic">
       <div class="field">
         <label for="item-name">物品名称 <em>*</em></label>
         <input
@@ -272,21 +149,21 @@ onUnmounted(() => { for (const image of images.value) URL.revokeObjectURL(image.
       <p v-if="submitError" class="form-error" role="alert">{{ submitError }}</p>
 
       <button type="submit" class="primary-button" :disabled="submitting">
-        {{ submitting ? '保存中…' : '保存基本信息' }}
+        下一步：选择照片
       </button>
-      <p class="form-tip">保存后库存和实物编号立即生效，然后可以上传照片。</p>
+      <p class="form-tip">下一步可选择照片，最后点击完成上架才会创建物品。</p>
     </form>
 
     <template v-else>
       <!-- 已创建物品摘要 -->
       <div class="created-summary">
         <div>
-          <p class="eyebrow">已创建 · #{{ createdItem.id }}</p>
-          <h3>{{ createdItem.name }}</h3>
+          <p class="eyebrow">待确认</p>
+          <h3>{{ form.name }}</h3>
           <p>
-            {{ locationName(createdItem.locationId) }} ·
-            {{ createdItem.isValuable ? '贵重物品（预约需审批）' : '普通物品' }} ·
-            {{ createdItem.status === 'ACTIVE' ? '已启用' : '已停用' }}
+            {{ locationName(form.locationId) }} ·
+            {{ form.isValuable ? '贵重物品（预约需审批）' : '普通物品' }} ·
+            {{ form.status === 'ACTIVE' ? '已启用' : '已停用' }}
           </p>
         </div>
       </div>
@@ -300,9 +177,8 @@ onUnmounted(() => { for (const image of images.value) URL.revokeObjectURL(image.
         <div class="photo-grid">
           <figure v-for="image in images" :key="image.localId" class="photo-item">
             <img :src="image.previewUrl" :alt="image.fileName">
-            <span v-if="image.uploading" class="photo-mask">上传中…</span>
+
             <button
-              v-else
               type="button"
               class="photo-remove"
               :aria-label="`移除照片 ${image.fileName}`"
@@ -329,7 +205,11 @@ onUnmounted(() => { for (const image of images.value) URL.revokeObjectURL(image.
         <p v-if="photoError" class="field-error photo-error">{{ photoError }}</p>
       </div>
 
-      <button type="button" class="primary-button" :disabled="images.some(image => image.uploading)" @click="resetAll">完成上架</button>
+      <p v-if="submitError" class="form-error" role="alert">{{ submitError }}</p>
+      <div class="field-row">
+        <button type="button" class="refresh-button" :disabled="submitting || !!createdItem" @click="step = 0">上一步</button>
+        <button type="button" class="primary-button" :disabled="submitting" @click="finish">{{ submitting ? '正在保存…' : (createdItem ? '重试上传照片' : '确认并完成上架') }}</button>
+      </div>
     </template>
   </section>
 </template>

@@ -27,6 +27,11 @@ public class ItemController {
     }
     @PatchMapping("/api/v1/items/{itemId}")
     public Item patch(@PathVariable long itemId,@RequestBody Map<String,Object> body){return service.patch(itemId,body);}
+    @DeleteMapping("/api/v1/items/{itemId}")
+    public ResponseEntity<Void> archive(@PathVariable long itemId) {
+        service.archive(itemId);
+        return ResponseEntity.noContent().build();
+    }
     @GetMapping("/api/v1/items/{itemId}/units")
     public List<ItemUnit> units(@PathVariable long itemId){return service.units(itemId);}
     @PutMapping("/api/v1/items/{itemId}/stock")

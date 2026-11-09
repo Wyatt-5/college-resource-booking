@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { getReturnVerifications, submitReturnVerification } from '../lib/api'
+import { createRequestKey } from '../lib/requestKey'
 
 const queue = ref([])
 const loading = ref(false)
@@ -13,7 +14,7 @@ const busyId = ref(null)
 const idempotencyKeys = ref({})
 
 function formatTime(iso) {
-  return new Date(iso).toLocaleString('zh-CN', { hour12: false })
+  return new Date(iso).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 }
 
 // 契约里 ReturnPhoto.url 是可选项（受权限控制的图片地址），联调阶段由后端提供。
@@ -30,7 +31,7 @@ function markBroken(photoId) {
 }
 
 function keyFor(id) {
-  if (!idempotencyKeys.value[id]) idempotencyKeys.value[id] = crypto.randomUUID()
+  if (!idempotencyKeys.value[id]) idempotencyKeys.value[id] = createRequestKey()
   return idempotencyKeys.value[id]
 }
 
@@ -62,7 +63,7 @@ async function decide(submission, decision) {
     delete reasons.value[submission.id]
     delete idempotencyKeys.value[submission.id]
     banner.value = decision === 'ACCEPT'
-      ? `「${submission.itemName}」核验通过，实物 ${submission.unitCode} 已恢复可借。`
+      ? `「${submission.itemName}」核验通过，实物 ${submission.unitCodes.join('、')} 已恢复可借。`
       : `「${submission.itemName}」的归还已驳回，保持占用并等待用户重新提交。`
   } catch (cause) {
     banner.value = `处理失败：${cause.message}`
@@ -78,7 +79,7 @@ onMounted(loadQueue)
   <section class="return-verify">
     <div class="section-heading">
       <div>
-        <p class="eyebrow">管理后台 · 借还管理</p>
+
         <h2>归还核验</h2>
       </div>
       <button type="button" class="refresh-button" :disabled="loading" @click="loadQueue">
@@ -103,7 +104,7 @@ onMounted(loadQueue)
           <span class="status-badge badge-pending">待核验</span>
         </div>
         <p class="verify-meta">
-          借用人：{{ submission.borrower }} · 实物编号：<span class="unit-code">{{ submission.unitCode }}</span>
+          借用人：{{ submission.borrower }} · 实物编号：<span class="unit-code">{{ submission.unitCodes.join('、') }}</span>
           · 提交时间：{{ formatTime(submission.submittedAt) }}
         </p>
         <p v-if="submission.remark" class="verify-remark">备注：{{ submission.remark }}</p>
