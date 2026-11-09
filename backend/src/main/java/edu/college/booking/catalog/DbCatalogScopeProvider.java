@@ -19,8 +19,8 @@ public class DbCatalogScopeProvider implements CatalogScopeProvider {
     @Override
     public boolean managesAllLocations(String loginName) {
         Account account = active(loginName);
-        return accounts.grants(account.id()).stream().anyMatch(grant ->
-                "SYSTEM_ADMIN".equals(grant.role()) || "COUNSELOR_ADMIN".equals(grant.role()));
+        return accounts.isReviewer(account.id()) || accounts.grants(account.id()).stream().anyMatch(grant ->
+                "SYSTEM_ADMIN".equals(grant.role()) || "COUNSELOR_ADMIN".equals(grant.role()) || "RESOURCE_MANAGER".equals(grant.role()));
     }
 
     @Override

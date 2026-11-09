@@ -1,7 +1,7 @@
 <template>
   <section class="content-section login-section">
     <div class="login-card">
-      <p class="eyebrow">管理端</p>
+
       <h1>管理员登录</h1>
       <p class="section-sub">物品上架、库存与归还核验仅供管理员使用，请使用学院分配的账号登录。</p>
 

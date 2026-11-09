@@ -1,7 +1,7 @@
 <template>
   <section class="content-section">
     <div class="section-heading">
-      <div><p class="eyebrow">用户端</p><h1>我的预约</h1></div>
+      <div><h1>我的预约</h1></div>
       <button v-if="currentUser" class="refresh-button" :disabled="loading" @click="load">{{ loading ? '读取中…' : '刷新' }}</button>
     </div>
     <p v-if="banner" class="success-banner" role="status">{{ banner }}</p>
@@ -9,17 +9,18 @@
     <p v-else-if="errorMessage" class="state-card error-card" role="alert">{{ errorMessage }} <button class="link-button" @click="load">重试</button></p>
     <p v-else-if="loading" class="state-card">正在读取预约…</p>
     <p v-else-if="!reservations.length" class="state-card">你还没有提交预约。</p>
-    <div v-else class="reservation-list">
+    <div v-else class="reservation-list my-reservation-grid">
       <article v-for="reservation in reservations" :key="reservation.id" class="item-card reservation-entry">
         <div class="reservation-entry-main">
           <div class="reservation-entry-head"><h3>{{ reservation.resourceType === 'SPACE' ? '地点 · ' : '物品 · ' }}{{ reservation.itemName }}</h3><span :class="['status-badge', badgeClass(reservation.status)]">{{ displayStatus(reservation) }}</span></div>
           <p class="reservation-time">{{ formatTime(reservation.startAt) }} 至 {{ formatTime(reservation.endAt) }}</p>
           <p>{{ reservation.resourceType === 'ITEM' ? `数量 ${reservation.quantity} · ` : '' }}{{ reservation.purpose }}</p>
+          <p v-if="pickupHint(reservation)" class="pickup-hint">{{ pickupHint(reservation) }}</p>
           <p v-if="reservation.handoverStatus === 'RETURN_REJECTED'" class="rejection-reason">核验驳回：{{ reservation.lastReturnReason || '请补充照片后重新提交' }}</p>
         </div>
         <div class="reservation-actions">
           <button class="refresh-button" type="button" @click="selected=reservation">查看详情</button>
-          <button v-if="canPickup(reservation)" class="primary-button" type="button" @click="pickupTarget=reservation">确认领取</button>
+          <button v-if="showPickup(reservation)" class="primary-button" type="button" :disabled="!canPickup(reservation)" @click="pickupTarget=reservation">确认领取</button>
           <button v-if="canReturn(reservation)" class="primary-button" type="button" @click="returnTarget=reservation">{{ reservation.handoverStatus === 'RETURN_REJECTED' ? '重新提交归还' : '提交归还' }}</button>
           <button v-if="canCancel(reservation)" class="link-button" type="button" :disabled="cancelling===reservation.id" @click="cancel(reservation)">取消预约</button>
         </div>
@@ -38,14 +39,14 @@
     </BookingModal>
     <PickupConfirmationModal v-if="pickupTarget" :reservation="pickupTarget" @close="pickupTarget=null" @submitted="afterPickup" />
     <ReturnSubmissionModal v-if="returnTarget" :reservation="returnTarget" @close="returnTarget=null" @submitted="afterReturn" />
-    <nav v-if="currentUser && total > size" class="section-heading" aria-label="预约分页">
+    <nav v-if="currentUser && total > size" class="pagination-bar" aria-label="预约分页">
       <button class="refresh-button" :disabled="page === 0 || loading" @click="changePage(page - 1)">上一页</button><span>共 {{ total }} 条 · 第 {{ page + 1 }} 页</span><button class="refresh-button" :disabled="(page + 1) * size >= total || loading" @click="changePage(page + 1)">下一页</button>
     </nav>
   </section>
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getMyReservations, cancelMyReservation } from '../../lib/api'
 import BookingModal from '../../components/BookingModal.vue'
 import PickupConfirmationModal from '../../components/PickupConfirmationModal.vue'
@@ -56,13 +57,22 @@ const emit = defineEmits(['login-requested'])
 const reservations = ref([]), total = ref(0), page = ref(0), loading = ref(false)
 const errorMessage = ref(''), banner = ref(''), selected = ref(null), pickupTarget = ref(null), returnTarget = ref(null), cancelling = ref(null)
 const size = 20
+const now = ref(Date.now())
+let clockTimer
 const labels = { CONFIRMED: '已确认', PENDING_APPROVAL: '待审核', REJECTED: '已拒绝', CANCELLED: '已取消', EXPIRED: '已过期' }
 const handoverLabels = { NOT_PICKED_UP: '等待领取', CHECKED_OUT: '使用中', RETURN_SUBMITTED: '等待归还核验', RETURN_REJECTED: '归还被驳回', COMPLETED: '借还完成' }
 const statusName = status => labels[status] || status
 const handoverName = status => handoverLabels[status] || '未进入借还流程'
 const displayStatus = reservation => reservation.status === 'CONFIRMED' && reservation.handoverStatus ? handoverName(reservation.handoverStatus) : statusName(reservation.status)
 const formatTime = value => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
-const canPickup = reservation => reservation.resourceType === 'ITEM' && reservation.status === 'CONFIRMED' && reservation.handoverStatus === 'NOT_PICKED_UP' && new Date(reservation.startAt) <= new Date() && new Date(reservation.endAt) > new Date()
+const showPickup = reservation => reservation.resourceType === 'ITEM' && reservation.status === 'CONFIRMED' && reservation.handoverStatus === 'NOT_PICKED_UP'
+const canPickup = reservation => reservation.resourceType === 'ITEM' && reservation.status === 'CONFIRMED' && reservation.handoverStatus === 'NOT_PICKED_UP' && new Date(reservation.startAt).getTime() <= now.value && new Date(reservation.endAt).getTime() > now.value
+const pickupHint = reservation => {
+  if (reservation.resourceType !== 'ITEM' || reservation.status !== 'CONFIRMED' || reservation.handoverStatus !== 'NOT_PICKED_UP') return ''
+  if (new Date(reservation.startAt).getTime() > now.value) return '预约开始后可以确认领取，请在使用时段内领取。'
+  if (new Date(reservation.endAt).getTime() <= now.value) return '预约时间已结束，无法确认领取，请联系管理员。'
+  return ''
+}
 const canReturn = reservation => reservation.resourceType === 'ITEM' && ['CHECKED_OUT', 'RETURN_REJECTED'].includes(reservation.handoverStatus)
 const canCancel = reservation => ['CONFIRMED', 'PENDING_APPROVAL'].includes(reservation.status) && (!reservation.handoverStatus || reservation.handoverStatus === 'NOT_PICKED_UP') && new Date(reservation.startAt) > new Date()
 const badgeClass = status => ({ CONFIRMED: 'badge-ok', PENDING_APPROVAL: 'badge-pending', REJECTED: 'badge-reject', CANCELLED: 'badge-off', EXPIRED: 'badge-off' })[status] || 'badge-normal'
@@ -85,20 +95,25 @@ async function cancel(reservation) {
 async function afterPickup(result) { pickupTarget.value = null; banner.value = `领取确认成功，已绑定实物 ${result.unitCodes.join('、')}。`; await load() }
 async function afterReturn() { returnTarget.value = null; banner.value = '归还材料已提交，请等待管理员核验。'; await load() }
 watch(() => props.currentUser?.id, () => { reservations.value = []; page.value = 0; load() })
-onMounted(load)
+let activatedOnce = false
+onActivated(() => { if (activatedOnce) load(); activatedOnce = true })
+onMounted(() => { load(); clockTimer = window.setInterval(() => { now.value = Date.now() }, 30000) })
+onUnmounted(() => window.clearInterval(clockTimer))
 </script>
 <style scoped>
+.my-reservation-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));align-items:stretch}
+.pickup-hint{color:#665b7e;line-height:1.6}
 .rejection-reason{color:#a53e31;font-weight:700}
 /* 我的预约：标题与状态同一行，时间与用途分层，操作按钮独立成块，手机上整行可点 */
-.reservation-entry{flex-direction:column;align-items:stretch;gap:14px;padding:18px}
+.reservation-entry{display:flex;flex-direction:column;align-items:stretch;gap:14px;padding:18px}
 .reservation-entry-main{display:flex;flex-direction:column;gap:6px;min-width:0}
 .reservation-entry-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .reservation-entry-head h3{margin:0;font-size:16px;line-height:1.45;overflow-wrap:anywhere}
 .reservation-entry-head .status-badge{flex:0 0 auto;margin-top:2px}
 .reservation-entry p{margin:0;color:#5d5478;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
 .reservation-entry .reservation-time{color:#776d94;font-size:12px}
-.reservation-actions{display:flex;gap:10px;flex-wrap:wrap}
-.reservation-actions button{flex:1 1 auto;min-width:118px}
+.reservation-actions{margin-top:auto;display:flex;gap:10px;flex-wrap:wrap}
+.reservation-actions button{flex:0 1 auto;min-width:0;padding:9px 13px}
 .cancel-button{border-color:#dda694;color:#a03d2a}
 .cancel-button:hover:not(:disabled){background:#fdf3ee}
 .reservation-detail{display:grid;grid-template-columns:110px 1fr;gap:12px 14px;margin:0}

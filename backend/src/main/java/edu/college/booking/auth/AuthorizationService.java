@@ -21,6 +21,10 @@ public class AuthorizationService {
         }
         Account account = accounts.findByLogin(authentication.getName())
                 .orElseThrow(() -> new ApiProblem(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED", "请先登录"));
+        if (authentication.getPrincipal() instanceof org.springframework.security.core.userdetails.UserDetails principal
+                && (!(principal instanceof SessionAccount session) || !session.matchesPasswordHash(account.passwordHash()))) {
+            throw new ApiProblem(HttpStatus.UNAUTHORIZED, "SESSION_EXPIRED", "登录已失效，请重新登录");
+        }
         if (!account.active()) {
             throw new ApiProblem(HttpStatus.FORBIDDEN, "ACCOUNT_DISABLED", "账号已停用");
         }
@@ -46,25 +50,28 @@ public class AuthorizationService {
         if (account.id() == applicantId) {
             throw new ApiProblem(HttpStatus.CONFLICT, "SELF_APPROVAL_FORBIDDEN", "不能审核自己的申请");
         }
-        if (!accounts.isReviewer(account.id())) {
+        if (!isStaff(account)) {
             throw new ApiProblem(HttpStatus.FORBIDDEN, "FORBIDDEN", "没有审核权限");
         }
         return account;
     }
     public Account requireReviewer(Authentication authentication) {
         Account account = requireActive(authentication);
-        if (!accounts.isReviewer(account.id())) {
+        if (!isStaff(account)) {
             throw new ApiProblem(HttpStatus.FORBIDDEN, "FORBIDDEN", "没有审核权限");
         }
         return account;
     }
 
 
+    private boolean isStaff(Account account) {
+        return accounts.isReviewer(account.id()) || accounts.grants(account.id()).stream().anyMatch(grant ->
+                "SYSTEM_ADMIN".equals(grant.role()) || "COUNSELOR_ADMIN".equals(grant.role()) || "RESOURCE_MANAGER".equals(grant.role()));
+    }
+
     public Account requireSpaceManager(Authentication authentication) {
         Account account = requireActive(authentication);
-        if (accounts.grants(account.id()).stream().noneMatch(grant ->
-                "SYSTEM_ADMIN".equals(grant.role()) || "COUNSELOR_ADMIN".equals(grant.role())
-                        || "RESOURCE_MANAGER".equals(grant.role()))) {
+        if (!isStaff(account)) {
             throw new ApiProblem(HttpStatus.FORBIDDEN, "FORBIDDEN", "没有地点管理权限");
         }
         return account;
@@ -76,9 +83,6 @@ public class AuthorizationService {
 
     public boolean canManageLocation(Authentication authentication, long locationId) {
         Account account = requireActive(authentication);
-        List<Grant> grants = accounts.grants(account.id());
-        return grants.stream().anyMatch(grant -> "SYSTEM_ADMIN".equals(grant.role())
-                || "COUNSELOR_ADMIN".equals(grant.role())
-                || ("RESOURCE_MANAGER".equals(grant.role()) && Long.valueOf(locationId).equals(grant.locationId())));
+        return isStaff(account);
     }
 }

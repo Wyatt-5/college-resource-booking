@@ -90,6 +90,37 @@ public class SpaceService {
     }
 
     @Transactional
+    public Space update(Authentication authentication, long id, SpaceInput input) {
+        Account actor = authorization.requireSpaceManager(authentication);
+        Space before = required(id, true);
+        if (!"ACTIVE".equals(before.status())) throw new ApiProblem(HttpStatus.NOT_FOUND, "NOT_FOUND", "地点不存在");
+        String name = input == null || input.name() == null ? "" : input.name().trim();
+        String description = input == null || input.description() == null ? "" : input.description().trim();
+        int capacity = input == null || input.capacity() == null ? 0 : input.capacity();
+        if (name.isBlank() || name.length() > 100 || description.length() > 500 || capacity < 1 || capacity > 1000)
+            throw invalid("请填写地点名称、介绍和 1 至 1000 人的容量");
+        jdbc.update("UPDATE bookable_spaces SET name=?, description=?, capacity=? WHERE id=?", name, description, capacity, id);
+        Space after = required(id, false);
+        audit.record(actor.id(), "SPACE_UPDATED", "SPACE", id, before, after);
+        return after;
+    }
+
+    @Transactional
+    public void remove(Authentication authentication, long id) {
+        Account actor = authorization.requireSpaceManager(authentication);
+        Space before = required(id, true);
+        if (!"ACTIVE".equals(before.status())) throw new ApiProblem(HttpStatus.NOT_FOUND, "NOT_FOUND", "地点不存在");
+        boolean inUse = Boolean.TRUE.equals(jdbc.queryForObject("""
+                SELECT EXISTS (SELECT 1 FROM reservations WHERE space_id=? AND
+                    ((status='PENDING_APPROVAL' AND start_at>CURRENT_TIMESTAMP) OR
+                     (status='CONFIRMED' AND end_at>CURRENT_TIMESTAMP)))
+                """, Boolean.class, id));
+        if (inUse) throw new ApiProblem(HttpStatus.CONFLICT, "SPACE_IN_USE", "该地点仍有待审核或未结束的预约，请先处理");
+        jdbc.update("UPDATE bookable_spaces SET status='INACTIVE' WHERE id=?", id);
+        audit.record(actor.id(), "SPACE_REMOVED", "SPACE", id, before, null);
+    }
+
+    @Transactional
     public Space uploadImage(Authentication authentication, long id, MultipartFile file) throws IOException {
         Account actor = authorization.requireSpaceManager(authentication);
         required(id, true);

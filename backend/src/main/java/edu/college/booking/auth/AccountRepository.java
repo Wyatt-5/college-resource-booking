@@ -22,6 +22,14 @@ public class AccountRepository {
                 (rs, row) -> mapAccount(rs), loginName).stream().findFirst();
     }
 
+    public Optional<Account> lockByLogin(String loginName) {
+        return jdbc.query("SELECT id, login_name, display_name, password_hash, status FROM users WHERE login_name = ? FOR UPDATE",
+                (rs, row) -> mapAccount(rs), loginName).stream().findFirst();
+    }
+    public void reactivate(long id, String passwordHash) {
+        jdbc.update("UPDATE users SET status='ACTIVE', password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='DISABLED'", passwordHash, id);
+    }
+
     public Optional<Account> findById(long id) {
         return jdbc.query("SELECT id, login_name, display_name, password_hash, status FROM users WHERE id = ?",
                 (rs, row) -> mapAccount(rs), id).stream().findFirst();
@@ -38,9 +46,36 @@ public class AccountRepository {
                 Long.class, loginName, displayName, passwordHash);
     }
 
+    public boolean departmentExists(String name) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM departments WHERE name=?)", Boolean.class, name));
+    }
+    public void setDepartment(long id, String department) {
+        jdbc.update("INSERT INTO user_details(user_id,department) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET department=EXCLUDED.department",id,department);
+    }
+    public String department(long id) {
+        return jdbc.query("SELECT department FROM user_details WHERE user_id=?", (rs,n)->rs.getString(1),id).stream().findFirst().orElse("");
+    }
+
+    public boolean hasUnfinishedBookings(long id) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM reservations WHERE applicant_id=? AND
+                    ((status='PENDING_APPROVAL' AND start_at>CURRENT_TIMESTAMP)
+                    OR (status='CONFIRMED' AND (end_at>CURRENT_TIMESTAMP
+                        OR handover_status IN ('CHECKED_OUT','RETURN_SUBMITTED','RETURN_REJECTED')))))
+                """, Boolean.class, id));
+    }
+    public void disable(long id) {
+        jdbc.update("UPDATE users SET status='DISABLED', updated_at=CURRENT_TIMESTAMP WHERE id=?", id);
+    }
+
+    public int replacePassword(long id, String previousHash, String newHash) {
+        return jdbc.update("UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?",
+                newHash, id, previousHash);
+    }
+
     public UserProfile profile(Account account) {
         return new UserProfile(account.id(), account.loginName(), account.displayName(), account.status(),
-                grants(account.id()), isReviewer(account.id()));
+                grants(account.id()), isReviewer(account.id()), department(account.id()));
     }
 
     public List<Grant> grants(long userId) {

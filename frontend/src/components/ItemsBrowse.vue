@@ -2,7 +2,7 @@
   <section class="content-section">
     <div class="section-heading">
       <div>
-        <p class="eyebrow">{{ workspace === 'admin' ? '管理端' : '用户端' }} · 物品预约</p>
+
         <h1>{{ initialLocation ? `${initialLocation.name} · 物品` : '可借物品' }}</h1>
         <p class="section-sub">选择物品并提交时段预约。当前库存仅供参考，提交时会再次检查该时段的可用量。</p>
         <button v-if="initialLocation" class="link-button" type="button" @click="emit('back-to-locations')">← 返回资源总览</button>
@@ -10,6 +10,7 @@
       <button class="refresh-button" :disabled="loading" @click="loadItems">{{ loading ? '刷新中…' : '刷新' }}</button>
     </div>
 
+    <p v-if="bookingMessage" class="success-banner" role="status">{{ bookingMessage }}</p>
     <div class="filter-bar">
       <input v-model="filters.keyword" maxlength="100" aria-label="搜索物品名称或介绍" type="search" placeholder="搜索物品名称或介绍" @input="applyFilters(true)">
       <select aria-label="按地点筛选" v-model="filters.locationId" @change="applyFilters()">
@@ -52,7 +53,7 @@
       </article>
     </div>
 
-    <nav class="section-heading" aria-label="物品分页">
+    <nav class="pagination-bar" aria-label="物品分页">
       <button class="refresh-button" :disabled="loading || page === 0" @click="changePage(page - 1)">上一页</button>
       <span role="status">共 {{ total }} 件 · 第 {{ page + 1 }} / {{ Math.max(1, Math.ceil(total / size)) }} 页</span>
       <button class="refresh-button" :disabled="loading || (page + 1) * size >= total" @click="changePage(page + 1)">下一页</button>
@@ -77,7 +78,7 @@
           <div><dt>可提前预约</dt><dd>{{ advanceLimit(detail) }}</dd></div>
           <div><dt>归还要求</dt><dd>归还时需拍照，待管理员核验通过后才完成归还。</dd></div>
         </dl>
-        <ReservationForm :key="detail.id" :item="detail" :current-user="currentUser" @login-requested="emit('login-requested')" />
+        <ReservationForm :key="detail.id" :item="detail" :current-user="currentUser" @login-requested="emit('login-requested')" @created="onBookingCreated" />
         </template>
     </BookingModal>
   </section>
@@ -95,6 +96,7 @@ const locations = ref([])
 const loading = ref(false)
 const loadError = ref('')
 const locationsError = ref('')
+const bookingMessage = ref('')
 const detail = ref(null)
 const detailError = ref('')
 const detailLoading = ref(false)
@@ -143,8 +145,16 @@ watch(() => props.initialLocation?.id, id => {
   applyFilters()
 })
 function changePage(next) { page.value = next; loadItems() }
+function onBookingCreated(reservation) {
+  closeDetail()
+  bookingMessage.value = reservation.status === 'CONFIRMED'
+    ? '预约成功，普通物品无需审核。可在“我的预约”查看。'
+    : '预约申请已提交，等待审核。可在“我的预约”查看。'
+  loadItems()
+}
 function closeDetail() { ++detailVersion; detail.value = null; detailError.value = ''; detailLoading.value = false }
 async function openDetail(item) {
+  bookingMessage.value = ''
   const version = ++detailVersion
   detail.value = item; detailLoading.value = true; detailError.value = ''
   try { const data = await getPublicItem(item.id); if (version === detailVersion) detail.value = data }

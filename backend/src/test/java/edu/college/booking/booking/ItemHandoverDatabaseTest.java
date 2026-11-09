@@ -32,6 +32,7 @@ import tools.jackson.databind.ObjectMapper;
 @TestPropertySource(properties = "return.images.directory=./target/test-return-images")
 @EnabledIfEnvironmentVariable(named = "CATALOG_DB_TEST", matches = "true")
 class ItemHandoverDatabaseTest {
+    @Autowired edu.college.booking.auth.AccountUserDetailsService loginDetails;
     @Autowired JdbcTemplate db;
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
@@ -91,12 +92,12 @@ class ItemHandoverDatabaseTest {
         String unitCode = db.queryForObject("SELECT unit_code FROM item_units WHERE id=?", String.class, unitId);
         String pickupBody = json.writeValueAsString(java.util.Map.of("unitCodes", java.util.List.of(unitCode)));
         mvc.perform(post("/api/v1/reservations/" + reservationId + "/pickup")
-                        .with(user(managerLogin)).with(csrf()).header("Idempotency-Key", "pickup-owner-test")
+                        .with(user(loginDetails.loadUserByUsername(managerLogin))).with(csrf()).header("Idempotency-Key", "pickup-owner-test")
                         .contentType("application/json").content(pickupBody))
                 .andExpect(status().isForbidden());
         for (int retry = 0; retry < 2; retry++) {
             mvc.perform(post("/api/v1/reservations/" + reservationId + "/pickup")
-                            .with(user(ownerLogin)).with(csrf()).header("Idempotency-Key", "pickup-owner-test")
+                            .with(user(loginDetails.loadUserByUsername(ownerLogin))).with(csrf()).header("Idempotency-Key", "pickup-owner-test")
                             .contentType("application/json").content(pickupBody))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.handoverStatus").value("CHECKED_OUT"))
@@ -110,16 +111,16 @@ class ItemHandoverDatabaseTest {
                 JOIN return_submissions s ON s.id=p.submission_id
                 WHERE s.reservation_id=?
                 """, Long.class, reservationId);
-        mvc.perform(get("/api/v1/return-photos/" + firstPhoto).with(user(ownerLogin)))
+        mvc.perform(get("/api/v1/return-photos/" + firstPhoto).with(user(loginDetails.loadUserByUsername(ownerLogin))))
                 .andExpect(status().isOk());
         mvc.perform(get("/api/v1/reservations").param("handoverStatus", "RETURN_SUBMITTED")
-                        .with(user(managerLogin)))
+                        .with(user(loginDetails.loadUserByUsername(managerLogin))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(reservationId))
                 .andExpect(jsonPath("$[0].unitCodes[0]").value(unitCode))
                 .andExpect(jsonPath("$[0].photos[0].url").isString());
         mvc.perform(post("/api/v1/reservations/" + reservationId + "/return-verification")
-                        .with(user(managerLogin)).with(csrf()).header("Idempotency-Key", "reject-return-test")
+                        .with(user(loginDetails.loadUserByUsername(managerLogin))).with(csrf()).header("Idempotency-Key", "reject-return-test")
                         .contentType("application/json")
                         .content("{\"decision\":\"REJECT\",\"reason\":\"照片不清楚\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.handoverStatus").value("RETURN_REJECTED"));
@@ -127,7 +128,7 @@ class ItemHandoverDatabaseTest {
 
         submitPhoto("return-attempt-2", "补拍清晰照片");
         mvc.perform(post("/api/v1/reservations/" + reservationId + "/return-verification")
-                        .with(user(managerLogin)).with(csrf()).header("Idempotency-Key", "accept-return-test")
+                        .with(user(loginDetails.loadUserByUsername(managerLogin))).with(csrf()).header("Idempotency-Key", "accept-return-test")
                         .contentType("application/json").content("{\"decision\":\"ACCEPT\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.handoverStatus").value("COMPLETED"));
         assertEquals("AVAILABLE", db.queryForObject("SELECT status FROM item_units WHERE id=?", String.class, unitId));
@@ -140,7 +141,7 @@ class ItemHandoverDatabaseTest {
                 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
         MockMultipartFile photo = new MockMultipartFile("photos", "return.png", "image/png", png);
         mvc.perform(multipart("/api/v1/reservations/" + reservationId + "/return-submission")
-                        .file(photo).param("remark", remark).with(user(ownerLogin)).with(csrf())
+                        .file(photo).param("remark", remark).with(user(loginDetails.loadUserByUsername(ownerLogin))).with(csrf())
                         .header("Idempotency-Key", key))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.handoverStatus").value("RETURN_SUBMITTED"))

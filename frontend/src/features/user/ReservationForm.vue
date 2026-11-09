@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createReservation, getItemAvailability } from '../../lib/api'
 import { createRequestKey } from '../../lib/requestKey'
+import { toggleTimeSlot } from '../../lib/timeSelection'
 
 const props = defineProps({ item: { type: Object, required: true }, currentUser: { type: Object, default: null } })
 const emit = defineEmits(['login-requested', 'created'])
@@ -23,6 +24,7 @@ const lastEndDate = computed(() => addDays(startDate.value, props.item.rules.max
 const lastViewDate = computed(() => addDays(lastStartDate.value, props.item.rules.maxBorrowDays ?? 0))
 const hours = Array.from({ length: 24 }, (_, i) => i)
 const bands = Array.from({ length: 12 }, (_, i) => i * 2)
+const selectionActive = ref(false)
 const quantity = ref(1)
 const purpose = ref('')
 const submitting = ref(false)
@@ -35,7 +37,7 @@ let requestKey = null
 let version = 0
 const slot = hour => availability.value?.slots.find(entry => entry.hour === hour)
 const past = hour => instant(viewDate.value, hour) <= Date.now()
-const selected = hour => instant(viewDate.value, hour) >= instant(startDate.value, startHour.value)
+const selected = hour => selectionActive.value && instant(viewDate.value, hour) >= instant(startDate.value, startHour.value)
   && instant(viewDate.value, hour) < instant(endDate.value, endHour.value)
 const startHours = computed(() => hours.filter(hour => instant(startDate.value, hour) > Date.now()))
 const endHours = computed(() => hours.filter(hour => instant(endDate.value, hour) > instant(startDate.value, startHour.value)))
@@ -62,12 +64,18 @@ watch([startDate, startHour, endDate, endHour, quantity, purpose], () => {
   requestKey = null; successMessage.value = ''; errorMessage.value = ''
 })
 function chooseHour(hour) {
-  startDate.value = viewDate.value; startHour.value = hour
-  const following = new Date(instant(viewDate.value, hour) + 3600000)
-  endDate.value = dateKey(following); endHour.value = chinaHour(following)
+  const point = instant(viewDate.value, hour)
+  const range = selectionActive.value ? { start: instant(startDate.value, startHour.value), end: instant(endDate.value, endHour.value) } : null
+  const next = toggleTimeSlot(range, point, 3600000)
+  if (next?.blocked) { errorMessage.value = '预约时段需要连续，请从已选时段的两端取消。'; return }
+  if (!next) { selectionActive.value = false; errorMessage.value = ''; return }
+  startDate.value = dateKey(new Date(next.start)); startHour.value = chinaHour(new Date(next.start))
+  endDate.value = dateKey(new Date(next.end)); endHour.value = chinaHour(new Date(next.end))
+  selectionActive.value = true; errorMessage.value = ''
 }
 async function submit() {
   if (submitting.value || calendarLoading.value || calendarError.value) return
+  if (!selectionActive.value) { errorMessage.value = '请先选择预约时段。'; return }
   const start = instant(startDate.value, startHour.value)
   const end = instant(endDate.value, endHour.value)
   if (!Number.isFinite(start) || !Number.isFinite(end) || start <= Date.now() || end <= start) {
@@ -89,10 +97,9 @@ async function submit() {
       startAt: new Date(start).toISOString(), endAt: new Date(end).toISOString(),
       quantity: quantity.value, purpose: purpose.value }, requestKey)
     successMessage.value = reservation.status === 'CONFIRMED'
-      ? '预约已确认，可在“我的预约”查看时段与状态。'
+      ? '普通物品预约已自动确认，无需审核；可在“我的预约”查看时段与状态。'
       : '预约申请已提交，等待其他审核员处理；可在“我的预约”查看进展。'
     emit('created', reservation)
-    await loadAvailability()
   } catch (cause) { errorMessage.value = cause.message || '预约提交失败，请稍后重试。'; await loadAvailability() }
   finally { submitting.value = false }
 }
@@ -116,27 +123,28 @@ onUnmounted(() => { ++version })
       <div v-for="band in bands" :key="band" class="item-time-band">
         <span class="time-band-label">{{ hourText(band) }}<small>— {{ hourText(band + 2) }}</small></span>
         <button v-for="hour in [band, band + 1]" :key="hour" type="button" class="item-time-slot"
-          :class="{ occupied: slot(hour)?.available < quantity, selected: selected(hour) }"
+          :class="{ occupied: slot(hour)?.available < quantity, selected: selected(hour) }" :aria-pressed="selected(hour)"
           :disabled="submitting || past(hour) || viewDate > lastStartDate || slot(hour)?.available < quantity" @click="chooseHour(hour)">
           <strong>{{ hourText(hour) }}–{{ hourText(hour + 1) }}</strong>
-          <span>{{ past(hour) ? '已过时' : slot(hour)?.available === 0 ? '已约满' : `余 ${slot(hour)?.available} 件` }}</span>
+          <span>{{ past(hour) ? '已过时' : selected(hour) ? '已选择' : slot(hour)?.available === 0 ? '已约满' : `余 ${slot(hour)?.available} 件` }}</span>
           <small v-if="slot(hour)?.reserved">已占用 {{ slot(hour).reserved }} 件</small>
           <small v-if="slot(hour)?.pending">待审核 {{ slot(hour).pending }} 件</small>
         </button>
       </div>
     </div>
-    <p class="booking-help">两小时一组、每格一小时。点击可用格可快速选择一小时；跨天借用请在下方设置起止日期。</p>
+    <p class="booking-help">两小时一组、每格一小时。点击时段选择，再点已选的两端可取消；连续多小时可依次点击相邻时段。跨天也可在下方设置起止日期。</p>
+    <p v-if="!selectionActive" class="booking-help">请点击时间表或修改下方日期时间以选择预约时段。</p>
     <p v-if="item.unitSummary.available < 1" class="field-error">目前没有可借实物，请等待管理员恢复库存。</p>
     <div v-else-if="!currentUser"><p>登录后即可提交预约。</p><button class="primary-button" type="button" @click="emit('login-requested')">去登录</button></div>
     <form v-else @submit.prevent="submit">
       <fieldset :disabled="submitting" class="booking-fields">
         <div class="booking-date-row">
-          <label class="field"><span>开始日期</span><input v-model="startDate" type="date" :min="today" :max="lastStartDate" required></label>
-          <label class="field"><span>开始时间</span><select v-model.number="startHour" aria-label="开始时间" required><option v-for="hour in startHours" :key="hour" :value="hour">{{ hourText(hour) }}</option></select></label>
+          <label class="field"><span>开始日期</span><input v-model="startDate" @change="selectionActive = true" type="date" :min="today" :max="lastStartDate" required></label>
+          <label class="field"><span>开始时间</span><select v-model.number="startHour" @change="selectionActive = true" aria-label="开始时间" required><option v-for="hour in startHours" :key="hour" :value="hour">{{ hourText(hour) }}</option></select></label>
         </div>
         <div class="booking-date-row">
-          <label class="field"><span>结束日期</span><input v-model="endDate" type="date" :min="startDate" :max="lastEndDate" required></label>
-          <label class="field"><span>结束时间</span><select v-model.number="endHour" aria-label="结束时间" required><option v-for="hour in endHours" :key="hour" :value="hour">{{ hourText(hour) }}</option></select></label>
+          <label class="field"><span>结束日期</span><input v-model="endDate" @change="selectionActive = true" type="date" :min="startDate" :max="lastEndDate" required></label>
+          <label class="field"><span>结束时间</span><select v-model.number="endHour" @change="selectionActive = true" aria-label="结束时间" required><option v-for="hour in endHours" :key="hour" :value="hour">{{ hourText(hour) }}</option></select></label>
         </div>
         <label class="field"><span>数量</span><input v-model.number="quantity" type="number" min="1" :max="Math.min(100,item.unitSummary.available)" required></label>
         <label class="field"><span>借用用途</span><textarea v-model.trim="purpose" maxlength="300" rows="2" required placeholder="例如：学院活动摄影"></textarea></label>
@@ -151,7 +159,7 @@ onUnmounted(() => { ++version })
 <style scoped>
 .item-booking input[type=date]{width:100%;min-height:48px;border:1px solid #d4c6ec;background:#fcfaff;color:#35254f;border-radius:9px;padding:10px 12px;font:inherit;box-sizing:border-box}
 .item-time-slot strong,.item-time-slot span{align-self:center}.item-time-slot span{justify-self:start}
-.item-booking{border-top:1px solid #e9e2f3;padding-top:10px}.booking-help{color:#81718e;font-size:13px;line-height:1.7}.calendar-toolbar{display:flex;gap:12px;align-items:end;margin:18px 0}.calendar-toolbar .field{flex:1;margin:0}.calendar-toolbar button{padding:12px 18px}.item-timetable{max-height:330px;overflow-y:auto;border:1px solid #e6dff0;border-radius:13px}.item-time-band{display:grid;grid-template-columns:90px repeat(2,minmax(0,1fr));gap:1px;background:#e9e2f3;border-bottom:1px solid #e9e2f3}.item-time-band:last-child{border:0}.time-band-label{background:#faf8fd;padding:12px;color:#625174;display:flex;flex-direction:column;justify-content:center;gap:4px;font-size:13px}.time-band-label small{color:#9686a5}.item-time-slot{border:0;background:#fff;color:#49365e;padding:12px;display:grid;grid-template-columns:1fr auto;gap:7px;text-align:left;cursor:pointer;min-height:70px}.item-time-slot strong{font-size:13px}.item-time-slot span{font-size:12px;background:#eee8f8;color:#63418e;padding:3px 8px;border-radius:20px}.item-time-slot small{font-size:11px;color:#8d799d;grid-column:1/-1}.item-time-slot.selected{background:#f1ebfa}.item-time-slot:disabled{cursor:not-allowed;color:#978ba5;background:#f7f5f9}.item-time-slot.occupied span{background:#e7e3ec;color:#83788f}.booking-fields{border:0;padding:0;margin:22px 0;min-width:0;display:grid;gap:16px}.booking-date-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}.booking-date-row .field{min-width:0;margin:0}.booking-date-row input{min-width:0;max-width:100%;box-sizing:border-box}
+.item-booking{border-top:1px solid #e9e2f3;padding-top:10px}.booking-help{color:#81718e;font-size:13px;line-height:1.7}.calendar-toolbar{display:flex;gap:12px;align-items:end;margin:18px 0}.calendar-toolbar .field{flex:1;margin:0}.calendar-toolbar button{padding:12px 18px}.item-timetable{max-height:330px;overflow-y:auto;border:1px solid #e6dff0;border-radius:13px}.item-time-band{display:grid;grid-template-columns:90px repeat(2,minmax(0,1fr));gap:1px;background:#e9e2f3;border-bottom:1px solid #e9e2f3}.item-time-band:last-child{border:0}.time-band-label{background:#faf8fd;padding:12px;color:#625174;display:flex;flex-direction:column;justify-content:center;gap:4px;font-size:13px}.time-band-label small{color:#9686a5}.item-time-slot{border:0;background:#fff;color:#49365e;padding:12px;display:grid;grid-template-columns:1fr auto;gap:7px;text-align:left;cursor:pointer;min-height:70px}.item-time-slot strong{font-size:13px}.item-time-slot span{font-size:12px;background:#eee8f8;color:#63418e;padding:3px 8px;border-radius:20px}.item-time-slot small{font-size:11px;color:#8d799d;grid-column:1/-1}.item-time-slot.selected{background:#e6dcf7;box-shadow:inset 0 0 0 2px #765bb1}.item-time-slot.selected span{background:#694c9a;color:#fff}.item-time-slot:disabled{cursor:not-allowed;color:#978ba5;background:#f7f5f9}.item-time-slot.occupied span{background:#e7e3ec;color:#83788f}.booking-fields{border:0;padding:0;margin:22px 0;min-width:0;display:grid;gap:16px}.booking-date-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}.booking-date-row .field{min-width:0;margin:0}.booking-date-row input{min-width:0;max-width:100%;box-sizing:border-box}
 @media(max-width:600px){
   /* 时间表不再自带滚动条，交给弹窗整体滚动；每格加高到便于手指点按 */
   .item-timetable{max-height:none;overflow:visible;border-radius:12px}

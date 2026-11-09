@@ -54,6 +54,23 @@ class CatalogDatabaseTest {
                 .contentType("application/json").content(body(place,name))).andExpect(status().isCreated())
                 .andExpect(header().exists("Location")).andReturn().getResponse().getContentAsString()).get("id").asLong();
     }
+    @Test void archivePreservesHistoryAndBlocksUnfinishedBookings() throws Exception {
+        long item = create(location, "需要移除的物品");
+        long applicant = db.queryForObject("INSERT INTO users(login_name,display_name,password_hash) VALUES (?, '测试用户', 'hash') RETURNING id", Long.class, "archive-" + UUID.randomUUID());
+        long reservation = db.queryForObject("""
+                INSERT INTO reservations(applicant_id, resource_type, item_id, start_at, end_at, purpose, quantity, status, idempotency_key, payload_hash)
+                VALUES (?, 'ITEM', ?, CURRENT_TIMESTAMP + INTERVAL '1 hour', CURRENT_TIMESTAMP + INTERVAL '2 hours', '测试', 1, 'PENDING_APPROVAL', ?, 'hash') RETURNING id
+                """, Long.class, applicant, item, UUID.randomUUID().toString());
+        mvc.perform(delete("/api/v1/items/"+item).with(user("ordinary-user"))).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/v1/items/"+item).with(admin())).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ITEM_IN_USE"));
+        db.update("UPDATE reservations SET status='CANCELLED' WHERE id=?", reservation);
+        mvc.perform(delete("/api/v1/items/"+item).with(admin())).andExpect(status().isNoContent());
+        mvc.perform(get("/api/v1/items/"+item)).andExpect(status().isNotFound());
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM reservations WHERE id=? AND item_id=?", Integer.class, reservation, item));
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM items WHERE id=? AND archived_at IS NULL", Integer.class, item));
+        mvc.perform(get("/api/v1/items").with(admin()).param("scope","managed").param("keyword","需要移除的物品"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+    }
     @Test void createReplayPartialPatchAndAudit()throws Exception{
         String payload=body(location,"相机"),key=UUID.randomUUID().toString();
         String result=mvc.perform(post("/api/v1/items").with(admin()).header("Idempotency-Key",key).contentType("application/json").content(payload))

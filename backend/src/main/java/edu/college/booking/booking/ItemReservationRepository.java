@@ -156,7 +156,7 @@ public class ItemReservationRepository {
             int quantity, String status, long submissionSeq, Instant submittedAt,
             String priorityTier, int competingPending) {}
 
-    // Counselor requests are listed first as a hint only; the reviewer still decides.
+    // 待审申请按提交顺序展示，审核人决定如何处理冲突。
     public List<PendingItem> pending(int size, long offset) {
         return jdbc.query("""
                 SELECT * FROM (
@@ -164,10 +164,8 @@ public class ItemReservationRepository {
                            COALESCE(i.name, s.name) AS item_name, r.applicant_id,
                            u.display_name AS applicant_name, r.start_at, r.end_at, r.purpose,
                            r.quantity, r.status, r.submission_seq, r.submitted_at,
-                           EXISTS(SELECT 1 FROM role_grants g WHERE g.user_id = r.applicant_id
-                                  AND g.role = 'COUNSELOR_ADMIN') AS counselor,
                            (SELECT count(*) FROM reservations o
-                              WHERE o.status = 'PENDING_APPROVAL' AND o.id <> r.id
+                              WHERE o.status = 'PENDING_APPROVAL' AND o.start_at > CURRENT_TIMESTAMP AND o.id <> r.id
                                 AND o.start_at < r.end_at AND o.end_at > r.start_at
                                 AND ((r.space_id IS NOT NULL AND o.space_id = r.space_id)
                                   OR (r.item_id IS NOT NULL AND o.item_id = r.item_id))) AS competing
@@ -175,9 +173,9 @@ public class ItemReservationRepository {
                     JOIN users u ON u.id = r.applicant_id
                     LEFT JOIN items i ON i.id = r.item_id
                     LEFT JOIN bookable_spaces s ON s.id = r.space_id
-                    WHERE r.status = 'PENDING_APPROVAL'
+                    WHERE r.status = 'PENDING_APPROVAL' AND r.start_at > CURRENT_TIMESTAMP
                 ) q
-                ORDER BY (resource_type = 'SPACE' AND counselor) DESC, submission_seq
+                ORDER BY submission_seq
                 LIMIT ? OFFSET ?
                 """, (rs, row) -> new PendingItem(rs.getLong("id"), rs.getString("resource_type"),
                 rs.getLong("resource_id"), rs.getString("item_name"), rs.getLong("applicant_id"),
@@ -185,11 +183,11 @@ public class ItemReservationRepository {
                 rs.getTimestamp("end_at").toInstant(), rs.getString("purpose"), rs.getInt("quantity"),
                 rs.getString("status"), rs.getLong("submission_seq"),
                 rs.getTimestamp("submitted_at").toInstant(),
-                rs.getBoolean("counselor") ? "COUNSELOR" : "STUDENT", rs.getInt("competing")),
+                "STANDARD", rs.getInt("competing")),
                 size, offset);
     }
     public long countPending() {
-        return jdbc.queryForObject("SELECT count(*) FROM reservations WHERE status='PENDING_APPROVAL'",Long.class);
+        return jdbc.queryForObject("SELECT count(*) FROM reservations WHERE status='PENDING_APPROVAL' AND start_at>CURRENT_TIMESTAMP",Long.class);
     }
     public ItemReservation decide(long id, String state, long reviewerId, String decision, String reason) {
         int updated = jdbc.update("""
