@@ -1,9 +1,9 @@
 <template>
   <section class="content-section login-section">
     <div class="login-card">
-      <p class="eyebrow">用户端</p>
-      <h1>登录后预约物品</h1>
-      <p class="section-sub">使用学院分配的账号。登录后可查看自己的预约。</p>
+
+      <h2>登录共用资源系统</h2>
+      <p class="section-sub">使用学院分配的账号。登录后可预约物品和地点；有管理权限的账号还可进入管理工作台。</p>
       <form class="login-form" @submit.prevent="submit">
         <label class="field"><span>账号</span>
           <input v-model.trim="account" type="text" autocomplete="username" required>
@@ -21,13 +21,14 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { loginUser } from '../../lib/api'
 
-const emit = defineEmits(['logged-in'])
+const emit = defineEmits(['logged-in', 'busy-change'])
 const account = ref('')
 const password = ref('')
 const submitting = ref(false)
+watch(submitting, value => emit('busy-change', value), { immediate: true })
 const errorMessage = ref('')
 
 async function submit() {
@@ -45,3 +46,6 @@ async function submit() {
   }
 }
 </script>
+<style scoped>
+.login-section{padding:0;min-height:0}.login-card{box-shadow:none;border:0;padding:0;width:100%;max-width:none}.login-card h2{margin-top:0}
+</style>

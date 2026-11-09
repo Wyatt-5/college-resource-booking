@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { getItemUnits, getItems, getLocations, updateItemUnit, updateItem, getItemImages, uploadItemImage, deleteItemImage } from '../lib/api'
+import { getItemUnits, getItems, getLocations, updateItemUnit, updateItem, getItemImages, uploadItemImage, deleteItemImage, archiveItem } from '../lib/api'
 import ItemCreateForm from './ItemCreateForm.vue'
 import BookingModal from './BookingModal.vue'
 import BookingLog from '../features/admin/BookingLog.vue'
@@ -21,6 +21,9 @@ const error = ref('')
 const locations = ref([])
 
 const expandedId = ref(null)
+const removingId = ref(null)
+const listMessage = ref('')
+const actionError = ref('')
 const unitsByItem = ref({})
 const unitsLoading = ref(false)
 const unitError = ref('')
@@ -92,6 +95,7 @@ async function toggleUnits(item) {
   stockTargets.value[item.id] = item.unitSummary.total
   edits.value[item.id]={name:item.name,description:item.description,locationId:item.locationId,isValuable:item.isValuable,status:item.status,advanceDays:item.rules.advanceDays,maxBorrowDays:item.rules.maxBorrowDays}
   editMessage.value=''
+  imageFile.value=null
   unitError.value = ''
   unitsLoading.value = true
   try {
@@ -103,6 +107,22 @@ async function toggleUnits(item) {
   } finally {
     unitsLoading.value = false
   }
+}
+
+async function removeItem(item) {
+  if (removingId.value !== null || !window.confirm(`确定移除“${item.name}”？物品将从库存和用户列表中隐藏，历史预约记录会保留。`)) return
+  removingId.value = item.id
+  actionError.value = ''
+  listMessage.value = ''
+  try {
+    await archiveItem(item.id)
+    listMessage.value = `已移除“${item.name}”。`
+    if (items.value.length === 1 && page.value > 0) page.value--
+    await loadItems()
+  } catch (cause) {
+    listMessage.value = ''
+    actionError.value = cause.message || '移除失败，请稍后重试。'
+  } finally { removingId.value = null }
 }
 
 async function changeUnitStatus(item, unit, event) {
@@ -140,7 +160,7 @@ onMounted(async () => {
     </BookingModal>
     <div class="section-heading">
       <div>
-        <p class="eyebrow">管理后台 · 库存管理</p>
+
         <h2>库存与实物编号</h2>
       </div>
       <div class="unit-input-row">
@@ -149,6 +169,8 @@ onMounted(async () => {
       </div>
     </div>
 
+    <p v-if="listMessage" class="notice" role="status">{{ listMessage }}</p>
+    <p v-if="actionError" class="state-card error-card" role="alert">{{ actionError }}</p>
     <p v-if="loading" class="state-card" role="status">正在读取物品库存…</p>
     <div v-else-if="error" class="state-card error-card" role="alert">
       <strong>暂时无法显示库存</strong>
@@ -189,17 +211,23 @@ onMounted(async () => {
               </td>
               <td>{{ item.unitSummary.available }} / {{ item.unitSummary.total }}</td>
               <td>
-                <button type="button" class="link-button" @click="toggleUnits(item)">
-                  {{ expandedId === item.id ? '收起' : '编辑物品' }}
-                </button>
+                <div class="item-row-actions">
+                  <button type="button" class="link-button" @click="toggleUnits(item)">编辑物品</button>
+                  <button type="button" class="link-button remove-item" :disabled="removingId !== null" @click="removeItem(item)">{{ removingId === item.id ? '移除中…' : '移除物品' }}</button>
+                </div>
               </td>
             </tr>
-            <tr v-if="expandedId === item.id" class="unit-row">
-              <td colspan="6">
+
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <BookingModal v-if="expandedId !== null" title="编辑物品" :busy="editSaving || unitSavingId !== null" @close="expandedId = null">
+      <template v-for="item in items.filter(entry => entry.id === expandedId)" :key="item.id">
                 <p v-if="unitsLoading" class="card-hint">正在读取实物编号…</p>
                 <template v-else>
                   <div class="item-edit-grid">
-                    <label class="field"><span>物品名称</span><input v-model.trim="edits[item.id].name" maxlength="50" required></label>
+                    <label class="field"><span>物品名称</span><input v-model.trim="edits[item.id].name" type="text" maxlength="50" required></label>
                     <label class="field"><span>存放地点</span><select v-model.number="edits[item.id].locationId"><option v-for="place in locations.filter(entry=>entry.status==='ACTIVE')" :key="place.id" :value="place.id">{{ place.name }}</option></select></label>
                     <label class="field"><span>物品介绍</span><textarea v-model.trim="edits[item.id].description" maxlength="300" rows="2"></textarea></label>
                     <label class="field"><span>物品类型</span><select v-model="edits[item.id].isValuable"><option :value="false">普通物品</option><option :value="true">贵重物品（需审核）</option></select></label>
@@ -237,13 +265,9 @@ onMounted(async () => {
                   <p v-else class="card-hint">当前库存为0，可在上方调整库存数量。</p>
                   <BookingLog :item-id="item.id" />
                 </template>
-              </td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
-    <nav class="section-heading" aria-label="库存分页">
+      </template>
+    </BookingModal>
+    <nav class="pagination-bar" aria-label="库存分页">
       <button class="refresh-button" :disabled="loading || page === 0" @click="page--; loadItems()">上一页</button>
       <span>共 {{ total }} 项 · 第 {{ page + 1 }} 页</span>
       <button class="refresh-button" :disabled="loading || (page + 1) * size >= total" @click="page++; loadItems()">下一页</button>
@@ -251,6 +275,6 @@ onMounted(async () => {
   </section>
 </template>
 <style scoped>
-.item-edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:18px}.item-edit-grid .field{min-width:0}.item-edit-photos{margin:22px 0;border-top:1px solid #e7e0f1;padding-top:15px;display:flex;align-items:center;flex-wrap:wrap;gap:12px}.item-edit-photos h3{width:100%;margin:0}.item-edit-photo{display:flex;align-items:center;gap:6px}.item-edit-photo img{width:72px;height:62px;object-fit:cover;border-radius:8px}
+.item-row-actions{display:flex;gap:14px;flex-wrap:wrap}.remove-item{color:#a23c36}.item-edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:18px}.item-edit-grid .field{min-width:0}.item-edit-photos{margin:22px 0;border-top:1px solid #e7e0f1;padding-top:15px;display:flex;align-items:center;flex-wrap:wrap;gap:12px}.item-edit-photos h3{width:100%;margin:0}.item-edit-photo{display:flex;align-items:center;gap:6px}.item-edit-photo img{width:72px;height:62px;object-fit:cover;border-radius:8px}
 @media(max-width:700px){.item-edit-grid{grid-template-columns:1fr}}
 </style>

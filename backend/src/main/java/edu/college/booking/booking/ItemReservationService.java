@@ -27,6 +27,8 @@ public class ItemReservationService {
             String endAt, String purpose, Integer quantity) {}
     public record ReservationPage(java.util.List<ItemReservation> content, int page,
             int size, long totalElements) {}
+    public record PendingPage(java.util.List<ItemReservationRepository.PendingItem> content, int page,
+            int size, long totalElements) {}
     public record LogPage(java.util.List<ItemReservationRepository.BookingLog> content,
             int page, int size, long totalElements) {}
     public record ReviewRequest(String decision,String reason) {}
@@ -156,10 +158,10 @@ public class ItemReservationService {
         return after;
     }
     @Transactional(readOnly=true)
-    public ReservationPage pending(Authentication authentication,int page,int size) {
+    public PendingPage pending(Authentication authentication,int page,int size) {
         authorization.requireReviewer(authentication);
         if(page<0||size<1||size>100)throw invalid("页码或每页数量无效");
-        return new ReservationPage(reservations.pending(size,(long)page*size),page,size,reservations.countPending());
+        return new PendingPage(reservations.pending(size,(long)page*size),page,size,reservations.countPending());
     }
     @Transactional
     public ItemReservation review(Authentication authentication,long reservationId,ReviewRequest request) {
@@ -179,13 +181,14 @@ public class ItemReservationService {
         if("APPROVE".equals(request.decision())) {
             if(!before.startAt().isAfter(Instant.now()))
                 throw new ApiProblem(HttpStatus.CONFLICT,"RESERVATION_EXPIRED","预约开始时间已过，无法批准");
-            if(reservations.earlierPendingOverlaps(before))
-                throw new ApiProblem(HttpStatus.CONFLICT,"EARLIER_REQUEST_PENDING","同一时段有更早提交的申请，请先处理较早的申请");
+            // 更早的待审申请只作为队列提示，不再阻止审核人选择后面的申请人。
             int available=reservations.availableUnits(before.resourceId());
             if(reservations.confirmedQuantity(before.resourceId(),before.startAt(),before.endAt())+before.quantity()>available)
                 throw new ApiProblem(HttpStatus.CONFLICT,"RESOURCE_CONFLICT","该时段库存不足，无法批准");
         }
-        ItemReservation after=reservations.decide(reservationId,"APPROVE".equals(request.decision())?"CONFIRMED":"REJECTED");
+        ItemReservation after=reservations.decide(reservationId,
+                "APPROVE".equals(request.decision())?"CONFIRMED":"REJECTED",
+                reviewer.id(),"APPROVE".equals(request.decision())?"APPROVED":"REJECTED",reason);
         audit.record(reviewer.id(),"RESERVATION_REVIEWED","RESERVATION",reservationId,before,
                 java.util.Map.of("reservation",after,"reason",reason));
         return after;

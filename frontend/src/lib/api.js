@@ -150,7 +150,7 @@ function adminFromProfile(profile) {
     ...profile,
     account: profile.loginName,
     name: profile.displayName,
-    roles: [...grants.map((grant) => grant.role), ...(profile.reviewer ? ['REVIEWER'] : [])],
+    roles: grants.some(grant => grant.role === 'SYSTEM_ADMIN') ? ['SYSTEM_ADMIN'] : (profile.reviewer || grants.some(grant => ['COUNSELOR_ADMIN', 'RESOURCE_MANAGER'].includes(grant.role)) ? ['REVIEWER'] : []),
     resourceScopes: grants.filter((grant) => grant.role === 'RESOURCE_MANAGER').map((grant) => grant.locationId),
   }
 }
@@ -342,6 +342,18 @@ export async function cancelMyReservation(id) {
 }
 export const getBookingLogs = ({ itemId, page = 0, size = 20 } = {}) =>
   getJson(`/management/reservations?page=${page}&size=${size}${itemId ? `&itemId=${itemId}` : ''}`)
+export async function archiveItem(id) {
+  if (USE_MOCK_ITEMS) {
+    await mockDelay()
+    const index = mockItems.findIndex(item => item.id === id)
+    if (index < 0) throw apiFailure('NOT_FOUND', '物品不存在')
+    mockItems.splice(index, 1)
+    return null
+  }
+  const csrf = await ensureCsrf()
+  return fetch(`${API_BASE}/items/${id}`, { method: 'DELETE', credentials: 'same-origin', headers: { ...authHeaders(), ...csrf } })
+    .then(response => parseResponse(response, '移除物品失败'))
+}
 export const updateItem = (id, payload) => patchJson(`/items/${id}`,payload)
 export const createReservation = (payload, idempotencyKey) =>
   postJson('/reservations', payload, idempotencyKey)
@@ -353,6 +365,12 @@ export const getSpaces = () => getJson('/spaces')
 export const getSpaceSlots = (spaceId, date) => getJson(`/spaces/${spaceId}/slots?date=${encodeURIComponent(date)}`)
 export const getItemAvailability = (itemId, date) => getJson(`/items/${itemId}/availability?date=${encodeURIComponent(date)}`)
 export const createSpace = (payload) => postJson('/spaces', payload)
+export const updateSpace = (id, payload) => patchJson(`/spaces/${id}`, payload)
+export async function removeSpace(id) {
+  const csrf = await ensureCsrf()
+  return fetch(`${API_BASE}/spaces/${id}`, { method:'DELETE', credentials:'same-origin', headers:{ ...authHeaders(), ...csrf } })
+    .then(response => parseResponse(response, '移除地点失败'))
+}
 export async function uploadSpaceImage(spaceId, file) {
   const body = new FormData()
   body.append('file', file)
@@ -497,6 +515,17 @@ export function getSessionAdmin() {
 export const getSessionUser = getSessionAdmin
 export const createUserAccount = (payload) => postJson('/users', payload)
 export const getUserAccounts = () => getJson('/users')
+export async function disableUserAccount(id) {
+  const csrf = await ensureCsrf()
+  return fetch(`${API_BASE}/users/${id}`, { method:'DELETE', credentials:'same-origin', headers:{ ...authHeaders(), ...csrf } })
+    .then(response=>parseResponse(response,'移除账号失败'))
+}
+export async function uploadLocationImage(id, file) {
+  const csrf = await ensureCsrf()
+  const body = new FormData(); body.append('file', file)
+  return fetch(`${API_BASE}/locations/${id}/image`, { method:'POST', credentials:'same-origin', headers:{ ...authHeaders(), ...csrf }, body })
+    .then(response=>parseResponse(response,'上传地点照片失败'))
+}
 export const setUserGrants = (userId, grants, reviewer) => putJson(`/users/${userId}/grants`, { grants, reviewer })
 
 export async function loginAdmin(account, password) {
@@ -582,7 +611,12 @@ export async function changeMyPassword({ oldPassword, newPassword }) {
     currentAdmin.password = newPassword
     return { changed: true }
   }
-  return postJson('/users/me/password', { oldPassword, newPassword })
+  const result = await postJson('/users/me/password', { oldPassword, newPassword })
+  currentAdmin = null
+  authToken = null
+  csrfToken = null
+  try { sessionStorage.removeItem(SESSION_KEY) } catch { /* storage unavailable */ }
+  return result
 }
 
 // 具有任一管理类角色即视为管理员（普通 USER 不进名单）
@@ -596,3 +630,29 @@ export async function getAdminList() {
   const users = await getJson('/users')
   return users.map(adminFromProfile).filter((user) => user.roles.some((role) => ADMIN_ROLES.includes(role)))
 }
+
+// 公告与反馈：同源会话，所有写操作携带 CSRF。
+export const getAnnouncements = ({ managed = false, page = 0, size = 20 } = {}) => getJson(`/announcements?managed=${managed}&page=${page}&size=${size}`)
+export const createAnnouncement = payload => postJson('/announcements', payload)
+export const updateAnnouncement = (id, payload) => putJson(`/announcements/${id}`, payload)
+export const getFeedback = ({ managed = false, page = 0, size = 20 } = {}) => getJson(`/feedback?managed=${managed}&page=${page}&size=${size}`)
+export const createFeedback = content => postJson('/feedback', { content })
+export const handleFeedback = (id, payload) => putJson(`/feedback/${id}`, payload)
+
+export const updateLocation = (id, payload) => patchJson(`/locations/${id}`, payload)
+export async function removeLocation(id) {
+  const csrf = await ensureCsrf()
+  return fetch(`${API_BASE}/locations/${id}`, { method: 'DELETE', headers: { Accept: 'application/json', ...authHeaders(), ...csrf }, credentials: 'same-origin' }).then(response => parseResponse(response, '移除地点失败'))
+}
+export const getMyDetails = () => getJson('/users/me/details')
+export const updateMyDetails = (input) => patchJson('/users/me/details', input)
+export async function uploadMyAvatar(file) {
+  const csrf = await ensureCsrf()
+  const body = new FormData(); body.append('file', file)
+  const result = await fetch(`${API_BASE}/users/me/avatar`, { method:'POST', headers:{ ...authHeaders(), ...csrf }, credentials:'same-origin', body }).then(response => parseResponse(response, '头像上传失败'))
+  window.dispatchEvent(new CustomEvent('avatar-updated'))
+  return result
+}
+
+export const getDepartments = () => getJson('/departments')
+export const createDepartment = name => postJson('/departments', { name })

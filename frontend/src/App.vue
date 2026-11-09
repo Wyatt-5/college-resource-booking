@@ -1,34 +1,34 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { getSessionAdmin, logoutAdmin, refreshAdminSession, MANAGEMENT_DEMO } from './lib/api'
-import AccountSettings from './components/AccountSettings.vue'
-import AdminLogin from './components/AdminLogin.vue'
+import { nextTabAfterClose } from './lib/pageTabs.js'
 import ItemStockList from './components/ItemStockList.vue'
 import ItemsBrowse from './components/ItemsBrowse.vue'
 import ReturnVerification from './components/ReturnVerification.vue'
 import UserLogin from './features/user/UserLogin.vue'
-import MyReservations from './features/user/MyReservations.vue'
+import BookingModal from './components/BookingModal.vue'
+import UserAvatar from './components/UserAvatar.vue'
+import MyPage from './features/user/MyPage.vue'
 import UserProvision from './features/admin/UserProvision.vue'
 import RoomPrototype from './features/rooms/RoomPrototype.vue'
 import SpaceManagement from './features/rooms/SpaceManagement.vue'
 import ApprovalQueue from './features/approval/ApprovalQueue.vue'
 import LocationOverview from './features/dashboard/LocationOverview.vue'
-import BookingLog from './features/admin/BookingLog.vue'
+import Announcements from './features/communication/Announcements.vue'
+import Feedback from './features/communication/Feedback.vue'
 
 const sections = [
   { key: 'locations', label: '存放地点', group: 'user' },
   { key: 'items', label: '物品预约', group: 'user' },
   { key: 'rooms', label: '地点预约', group: 'user' },
-  { key: 'mine', label: '我的预约', group: 'user' },
-  { key: 'login', label: '登录', group: 'user' },
+  { key: 'mine', label: '我的', group: 'user' },
   { key: 'itemStock', label: '库存管理', group: 'admin' },
   { key: 'spaceManage', label: '地点管理', group: 'admin' },
   { key: 'returnCheck', label: '归还核验', group: 'admin' },
   { key: 'account', label: '账号管理', group: 'admin' },
-  { key: 'userProvision', label: '账号与权限', group: 'admin' },
-  { key: 'bookAsUser', label: '预约物品', group: 'admin' },
   { key: 'approval', label: '审核工作台', group: 'admin' },
-  { key: 'bookingLog', label: '预约日志', group: 'admin' },
+  { key: 'announcementAdmin', label: '公告管理', group: 'admin' },
+  { key: 'feedbackAdmin', label: '用户反馈', group: 'admin' },
 ]
 
 const groups = {
@@ -37,6 +37,9 @@ const groups = {
 }
 
 const mode = ref('user')
+const showLogin = ref(false)
+const showAnnouncements = ref(false)
+const loginBusy = ref(false)
 const enableManagementDemo = MANAGEMENT_DEMO
 const activeSection = ref('locations')
 const selectedLocation = ref(null)
@@ -44,91 +47,144 @@ const adminUser = ref(getSessionAdmin())
 const hasManagementRole = computed(() => adminUser.value?.roles?.some((role) =>
   ['SYSTEM_ADMIN', 'COUNSELOR_ADMIN', 'RESOURCE_MANAGER', 'REVIEWER'].includes(role)))
 const canManageItems = computed(() => adminUser.value?.roles?.some((role) =>
-  ['SYSTEM_ADMIN', 'COUNSELOR_ADMIN', 'RESOURCE_MANAGER'].includes(role)))
+  ['SYSTEM_ADMIN', 'COUNSELOR_ADMIN', 'RESOURCE_MANAGER', 'REVIEWER'].includes(role)))
 
+const openTabs = ref([{ key: 'locations', label: '存放地点', group: 'user' }])
+const lastSections = ref({ user: 'locations', admin: 'itemStock' })
+const sessionGeneration = ref(0)
+const pageComponents = {
+  locations: LocationOverview, items: ItemsBrowse,
+  rooms: RoomPrototype, mine: MyPage, itemStock: ItemStockList,
+  spaceManage: SpaceManagement, returnCheck: ReturnVerification, account: UserProvision,
+  approval: ApprovalQueue, announcementAdmin: Announcements, feedbackAdmin: Feedback,
+}
+const visibleTabs = computed(() => openTabs.value.filter(tab => tab.group === mode.value))
+function ensureTab(key) {
+  const section = sections.find(item => item.key === key)
+  if (!section) return
+  if (!openTabs.value.some(tab => tab.key === key)) openTabs.value.push(section)
+  lastSections.value[section.group] = key
+  activeSection.value = key
+}
 function switchMode(next) {
   mode.value = next
-  selectedLocation.value = null
-  activeSection.value = next === 'admin' && !canManageItems.value ? 'approval' : sections.find((item) => item.group === next).key
+  const preferred = lastSections.value[next]
+  ensureTab(next === 'admin' && !canManageItems.value ? 'approval' : preferred)
 }
-
 function openLocation(location) {
   selectedLocation.value = { id: location.id, name: location.name }
-  activeSection.value = 'items'
+  ensureTab('items')
 }
-
 function openAllItems() {
   selectedLocation.value = null
-  activeSection.value = 'items'
+  ensureTab('items')
 }
-
 function selectSection(key) {
   if (key === 'items') selectedLocation.value = null
-  activeSection.value = key
+  ensureTab(key)
+}
+function selectTab(key) { ensureTab(key) }
+function closeTab(key) {
+  const section = sections.find(item => item.key === key)
+  if (!section) return
+  const groupTabs = openTabs.value.filter(tab => tab.group === section.group)
+  openTabs.value = openTabs.value.filter(tab => tab.key !== key)
+  if (lastSections.value[section.group] === key) {
+    lastSections.value[section.group] = nextTabAfterClose(groupTabs, key, section.group === 'user' ? 'locations' : 'itemStock')
+  }
+  if (activeSection.value === key) ensureTab(lastSections.value[section.group])
+}
+function pageProps(key) {
+  if (key === 'items') return { currentUser: adminUser.value, initialLocation: selectedLocation.value }
+  if (['mine', 'rooms', 'account', 'approval', 'feedbackAdmin'].includes(key)) return { currentUser: adminUser.value, ...(key === 'feedbackAdmin' ? { managed: true } : {}) }
+  if (key === 'announcementAdmin') return { managed: true }
+  return {}
 }
 
 function onLoggedIn(user) {
   adminUser.value = user
-  activeSection.value = mode.value === 'user' ? 'items' : (canManageItems.value ? 'itemStock' : 'approval')
+  showLogin.value = false
 }
 
 async function onLogout() {
   await logoutAdmin()
   adminUser.value = null
-  activeSection.value = mode.value === 'user' ? 'locations' : 'itemStock'
+  mode.value = 'user'
+  openTabs.value = [{ key: 'locations', label: '存放地点', group: 'user' }]
+  lastSections.value = { user: 'locations', admin: 'itemStock' }
+  selectedLocation.value = null
+  sessionGeneration.value++
+  activeSection.value = 'locations'
 }
 onMounted(() => {
   if (!enableManagementDemo) refreshAdminSession().then((user) => { adminUser.value = user }).catch(() => { adminUser.value = null })
 })
+
+// 手机上主导航是一条横向滑动的标签栏：切换模块后把当前标签滑进可视范围，
+// 避免点了导航却看不到自己所在的页面。
+const navRef = ref(null)
+function keepActiveNavVisible() {
+  const nav = navRef.value
+  if (!nav || nav.scrollWidth <= nav.clientWidth + 1) return
+  const active = nav.querySelector('.nav-button.active')
+  if (!active) return
+  const navBox = nav.getBoundingClientRect()
+  const activeBox = active.getBoundingClientRect()
+  const margin = 14
+  if (activeBox.left < navBox.left + margin) {
+    nav.scrollLeft -= navBox.left + margin - activeBox.left
+  } else if (activeBox.right > navBox.right - margin) {
+    nav.scrollLeft += activeBox.right - navBox.right + margin
+  }
+}
+watch([activeSection, mode], () => nextTick(keepActiveNavVisible))
 </script>
 
 <template>
   <div class="site-shell">
+    <BookingModal v-if="showLogin" title="登录" compact disable-backdrop-close :busy="loginBusy" @close="showLogin = false"><UserLogin @busy-change="loginBusy = $event" @logged-in="onLoggedIn" /></BookingModal>
+    <BookingModal v-if="showAnnouncements" title="公告栏" @close="showAnnouncements = false"><Announcements in-modal /></BookingModal>
     <header class="site-header">
       <div class="header-inner">
-        <div class="brand" aria-label="学院共用资源预约与借还系统">
-          <img class="brand-logo" src="/logo.png" alt="汕头大学数学与计算机学院">
-          <div>
-            <strong>共用资源预约与借还系统</strong>
-            <small>数学与计算机学院</small>
-          </div>
+        <div class="brand" aria-label="汕头大学数学与计算机学院">
+          <svg class="brand-filter" aria-hidden="true" width="0" height="0"><defs><filter id="emblem-transparent" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  -.3333 -.3333 -.3334 0 1"/><feComponentTransfer><feFuncA type="linear" slope="12" intercept="0"/></feComponentTransfer></filter></defs></svg>
+          <span class="brand-logo" role="img" aria-label="汕头大学数学与计算机学院 Shantou University College of Mathematics and Computer Science">
+            <img class="brand-wordmark-text" src="/college-wordmark.png" alt="" aria-hidden="true">
+            <img class="brand-wordmark-emblem" src="/college-wordmark.png" alt="" aria-hidden="true">
+            <img class="brand-wordmark-line" src="/college-wordmark.png" alt="" aria-hidden="true">
+          </span>
         </div>
+        <strong class="site-title">共用物品预约与借还系统</strong>
 
         <div class="header-actions">
+          <button v-if="mode === 'user'" type="button" class="announcement-button" title="公告栏" aria-label="公告栏" :aria-expanded="showAnnouncements" @click="showAnnouncements = true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-2 7-2 8h16c0-1-2-1-2-8M10 20h4"/></svg>
+          </button>
           <div v-if="adminUser" class="admin-chip">
+            <UserAvatar :user-id="adminUser.id" :name="adminUser.name" />
             <span>{{ adminUser.name }}</span>
             <button type="button" class="logout-button" @click="onLogout">退出</button>
           </div>
-          <button v-else-if="mode === 'user'" type="button" class="logout-button" @click="activeSection = 'login'">登录</button>
-          <div class="mode-switch" role="tablist" aria-label="切换工作区">
-          <button
-            v-for="(group, key) in groups"
-            :key="key"
-            type="button"
-            role="tab"
-            class="mode-tab"
-            :class="{ active: mode === key }"
-            :aria-selected="mode === key"
-            @click="switchMode(key)"
-          >
-            {{ group.label }}
+          <button v-else-if="mode === 'user'" type="button" class="logout-button" @click="showLogin = true">登录</button>
+          <button v-if="hasManagementRole" type="button" class="logout-button workspace-toggle"
+            @click="switchMode(mode === 'admin' ? 'user' : 'admin')">
+            {{ mode === 'admin' ? '← 返回用户端' : '⚙ 管理工作台' }}
           </button>
-          </div>
         </div>
       </div>
     </header>
 
     <div class="layout" :class="`mode-${mode}`">
-      <nav class="side-nav" aria-label="主导航">
+      <nav ref="navRef" class="side-nav" aria-label="主导航">
         <p class="nav-caption">{{ groups[mode].caption }}</p>
         <button
-          v-for="section in sections.filter((item) => item.group === mode && (item.key !== 'login' || !adminUser) && (item.key !== 'userProvision' || adminUser?.roles?.includes('SYSTEM_ADMIN')) && (item.group !== 'admin' || canManageItems || ['approval', 'bookAsUser'].includes(item.key)))"
+          v-for="section in sections.filter((item) => item.group === mode && item.key !== 'announcements' && (item.key !== 'login' || !adminUser) && (item.group !== 'admin' || canManageItems || item.key === 'approval'))"
           :key="section.key"
           type="button"
           class="nav-button"
           :class="{ active: activeSection === section.key }"
           :aria-current="activeSection === section.key ? 'page' : undefined"
-          :disabled="mode === 'admin' && !hasManagementRole"
+          :disabled="section.group === 'admin' && !hasManagementRole"
           @click="selectSection(section.key)"
         >
           {{ section.label }}
@@ -136,40 +192,24 @@ onMounted(() => {
       </nav>
 
       <main class="main-content">
-        <template v-if="mode === 'admin' && !hasManagementRole">
-          <p v-if="enableManagementDemo" class="notice" role="status">管理端演示：使用模拟账号和临时数据，操作不会保存到数据库。</p>
-          <p v-else class="notice" role="status">请使用真实账号登录。登录后才能使用管理功能；系统不会自动切换模拟账号。</p>
-          <AdminLogin @logged-in="onLoggedIn" />
+        <div class="workspace-strip">
+          <div class="page-tabs" role="tablist" :aria-label="mode === 'admin' ? '管理端已打开页面' : '用户端已打开页面'">
+            <div v-for="tab in visibleTabs" :key="tab.key" class="page-tab" :class="{ active: activeSection === tab.key }">
+              <button class="page-tab-label" type="button" role="tab" :aria-selected="activeSection === tab.key" @click="selectTab(tab.key)">{{ tab.label }}</button>
+              <button class="page-tab-close" type="button" :aria-label="`关闭${tab.label}`" @click="closeTab(tab.key)">×</button>
+            </div>
+          </div>
+        </div>
+        <div class="workspace-page">
+        <p v-if="mode === 'admin' && enableManagementDemo" class="notice" role="status">管理端演示：操作仅改变临时数据，刷新页面会重置，不会保存到数据库。</p>
+        <template v-for="tab in openTabs" :key="`${sessionGeneration}-${tab.key}`">
+          <KeepAlive>
+            <component v-if="tab.key === activeSection && tab.group === mode" :is="pageComponents[tab.key]" v-bind="pageProps(tab.key)"
+              @open-location="openLocation" @open-all="openAllItems" @back-to-locations="selectSection('locations')"
+              @login-requested="showLogin = true" @profile-changed="adminUser = $event" @password-changed="onLogout" />
+          </KeepAlive>
         </template>
-
-        <LocationOverview v-else-if="activeSection === 'locations'" @open-location="openLocation" @open-all="openAllItems" />
-
-        <ItemsBrowse v-else-if="activeSection === 'items'" :current-user="adminUser" :initial-location="selectedLocation" @login-requested="activeSection = 'login'" @back-to-locations="activeSection = 'locations'" />
-        <MyReservations v-else-if="activeSection === 'mine'" :current-user="adminUser" @login-requested="activeSection = 'login'" />
-        <RoomPrototype v-else-if="activeSection === 'rooms'" :current-user="adminUser" @login-requested="activeSection = 'login'" />
-        <UserLogin v-else-if="activeSection === 'login'" @logged-in="onLoggedIn" />
-
-        <template v-else-if="mode === 'admin'">
-          <p v-if="enableManagementDemo" class="notice" role="status">管理端演示：操作仅改变临时数据，刷新页面会重置，不会保存到数据库。</p>
-          <ItemStockList v-if="activeSection === 'itemStock'" />
-          <ItemsBrowse v-else-if="activeSection === 'bookAsUser'" workspace="admin" :current-user="adminUser" @login-requested="onLogout" />
-          <SpaceManagement v-else-if="activeSection === 'spaceManage'" />
-          <template v-else-if="activeSection === 'returnCheck'">
-            <ReturnVerification />
-          </template>
-          <AccountSettings v-else-if="activeSection === 'account'" @profile-changed="adminUser = $event" @password-changed="onLogout" />
-          <UserProvision v-else-if="activeSection === 'userProvision' && adminUser?.roles?.includes('SYSTEM_ADMIN')" :current-user="adminUser" />
-          <ApprovalQueue v-else-if="activeSection === 'approval'" :current-user="adminUser" />
-          <BookingLog v-else-if="activeSection === 'bookingLog'" />
-        </template>
-
-        <section v-else class="placeholder" aria-live="polite">
-          <p class="eyebrow">{{ groups[sections.find((item) => item.key === activeSection)?.group]?.label }}</p>
-          <h1>{{ sections.find((item) => item.key === activeSection)?.label }}</h1>
-          <div class="placeholder-box">暂无内容。</div>
-        </section>
-
-        <footer class="site-footer">学院共用资源预约与借还系统</footer>
+        </div>
       </main>
     </div>
   </div>

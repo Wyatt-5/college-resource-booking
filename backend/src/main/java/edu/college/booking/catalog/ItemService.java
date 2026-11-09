@@ -42,7 +42,9 @@ public class ItemService {
     }
     public Item managed(long id,boolean lock){
         CatalogAccess.Actor actor=access.current();
-        Item item=required(id,lock);actor.require(item.locationId());return item;
+        Item item=required(id,lock);actor.require(item.locationId());
+        if(repo.isArchived(id))throw CatalogException.missing();
+        return item;
     }
     @Transactional
     public Item create(Map<String,Object> body,String key){
@@ -79,6 +81,15 @@ public class ItemService {
         repo.update(id,input);
           if(target!=null) setStock(id,Map.of("quantity",target));
           Item after=required(id,false);operations.audit(actor.id(),"UPDATE_ITEM",id,before,after);return after;
+    }
+    @Transactional
+    public void archive(long id) {
+        CatalogAccess.Actor actor = access.current();
+        Item before = managed(id, true);
+        if (repo.hasUnfinishedBookings(id))
+            throw new CatalogException(HttpStatus.CONFLICT, "ITEM_IN_USE", "该物品仍有待审核、未结束的预约或未完成的借还，请先处理后再移除");
+        repo.archive(id);
+        operations.audit(actor.id(), "ARCHIVE_ITEM", id, before, null);
     }
     public List<ItemUnit> units(long id){managed(id,false);return repo.units(id);}
     @Transactional

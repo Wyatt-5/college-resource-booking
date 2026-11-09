@@ -9,6 +9,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,6 +34,18 @@ public class SpaceController {
             @RequestBody SpaceService.SpaceInput input) {
         SpaceService.Space space = service.create(authentication, input);
         return ResponseEntity.created(URI.create("/api/v1/spaces/" + space.id())).body(space);
+    }
+
+    @PatchMapping("/{id}")
+    public SpaceService.Space update(Authentication authentication, @PathVariable long id,
+            @RequestBody SpaceService.SpaceInput input) {
+        return service.update(authentication, id, input);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> remove(Authentication authentication, @PathVariable long id) {
+        service.remove(authentication, id);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{id}/slots")

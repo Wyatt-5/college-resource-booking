@@ -19,7 +19,7 @@ public class ItemRepository {
     public ItemPage page(Long location,String keyword,int page,int size,boolean available,String status,CatalogAccess.Actor manager) {
         Map<String,Object> p=new HashMap<>();
         p.put("keyword",keyword);p.put("size",size);p.put("offset",(long)page*size);
-        String where=" WHERE (strpos(lower(i.name),lower(:keyword))>0 OR strpos(lower(i.description),lower(:keyword))>0)";
+        String where=" WHERE i.archived_at IS NULL AND (strpos(lower(i.name),lower(:keyword))>0 OR strpos(lower(i.description),lower(:keyword))>0)";
         if(manager==null)where+=" AND i.status='ACTIVE' AND l.status='ACTIVE'";
         else if(!manager.allLocations()){
             if(manager.locations().isEmpty())where+=" AND FALSE";
@@ -34,6 +34,9 @@ public class ItemRepository {
     }
     public Optional<Item> find(long id,boolean lock){
         return db.query(SELECT+" WHERE i.id=:id"+(lock?" FOR UPDATE OF i":""),Map.of("id",id),this::map).stream().findFirst();
+    }
+    public boolean isArchived(long id) {
+        return Boolean.TRUE.equals(db.queryForObject("SELECT archived_at IS NOT NULL FROM items WHERE id=:id", Map.of("id",id),Boolean.class));
     }
     public boolean visible(Item item){
         return "ACTIVE".equals(item.status())&&Boolean.TRUE.equals(db.queryForObject("SELECT status='ACTIVE' FROM locations WHERE id=:id",Map.of("id",item.locationId()),Boolean.class));
@@ -88,6 +91,17 @@ public class ItemRepository {
     }
     public boolean hasActiveReservations(long item){
         return db.queryForObject("SELECT EXISTS(SELECT 1 FROM reservations WHERE item_id=:item AND status='CONFIRMED' AND (handover_status IS NULL OR handover_status<>'COMPLETED') AND end_at>CURRENT_TIMESTAMP)",Map.of("item",item),Boolean.class);
+    }
+    public boolean hasUnfinishedBookings(long item) {
+        return Boolean.TRUE.equals(db.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM reservations WHERE item_id=:item AND
+                    ((status='PENDING_APPROVAL' AND start_at>CURRENT_TIMESTAMP) OR (status='CONFIRMED' AND
+                        (end_at>CURRENT_TIMESTAMP OR handover_status IN ('CHECKED_OUT','RETURN_SUBMITTED','RETURN_REJECTED')))))
+                    OR EXISTS(SELECT 1 FROM item_units WHERE item_id=:item AND status IN ('CHECKED_OUT','RETURN_SUBMITTED'))
+                """, Map.of("item", item), Boolean.class));
+    }
+    public void archive(long item) {
+        db.update("UPDATE items SET status='INACTIVE', archived_at=CURRENT_TIMESTAMP WHERE id=:id AND archived_at IS NULL", Map.of("id", item));
     }
     public void removeNewestAvailableUnits(long item,int count){
         db.update("""

@@ -1,56 +1,28 @@
 <template>
   <section class="content-section">
-    <div class="section-heading">
+    <div v-if="view === 'all'" class="section-heading">
       <div>
-        <p class="eyebrow">管理端 · 账号管理</p>
+
         <h1>账号管理</h1>
         <p class="section-sub">查看和修改当前管理员的资料、密码，以及所有管理员名单。</p>
       </div>
     </div>
 
     <div class="account-grid">
-      <div class="account-card">
-        <h2>我的资料</h2>
+      <div v-if="view !== 'password'" class="account-card">
+        <div class="profile-header"><UserAvatar :user-id="profile.id" :name="profile.name" /><div><strong>{{ profile.name || '—' }}</strong><small>{{ profile.account || '—' }} · {{ roleLabels(profile.roles) }}</small></div></div>
         <form @submit.prevent="saveProfile">
-          <div class="profile-row">
-            <span class="profile-label">账号</span>
-            <span class="profile-value">{{ profile.account }}</span>
-          </div>
-          <div class="profile-row">
-            <span class="profile-label">角色</span>
-            <span class="profile-value">{{ roleLabels(profile.roles) }}</span>
-          </div>
-          <div class="profile-row">
-            <span class="profile-label">所属部门</span>
-            <span class="profile-value">{{ profile.department || '—' }}</span>
-          </div>
-          <div class="profile-row">
-            <span class="profile-label">加入时间</span>
-            <span class="profile-value">{{ profile.joinedAt || '—' }}</span>
-          </div>
-
-          <label class="field">
-            <span>姓名</span>
-            <input v-model.trim="profileForm.name" type="text" required>
-          </label>
-          <label class="field">
-            <span>邮箱</span>
-            <input v-model.trim="profileForm.email" type="email">
-          </label>
-          <label class="field">
-            <span>手机号</span>
-            <input v-model.trim="profileForm.phone" type="tel">
-          </label>
-
-          <p v-if="profileMessage" class="form-ok">{{ profileMessage }}</p>
-          <p v-if="profileError" class="form-error">{{ profileError }}</p>
-          <button class="primary-button" type="submit" :disabled="savingProfile">
-            {{ savingProfile ? '保存中…' : '保存修改' }}
-          </button>
+          <label class="field"><span>所属部门</span><select v-model="profileForm.department"><option value="">暂不设置</option><option v-if="profileForm.department && !departments.some(entry => entry.name === profileForm.department)" :value="profileForm.department">{{ profileForm.department }}（原有部门）</option><option v-for="entry in departments" :key="entry.id" :value="entry.name">{{ entry.name }}</option></select></label>
+          <label class="field"><span>邮箱</span><input v-model.trim="profileForm.email" type="email" maxlength="254"></label>
+          <label class="field"><span>手机号</span><input v-model.trim="profileForm.phone" type="tel" maxlength="30"></label>
+          <label class="field"><span>更换头像（JPG/PNG，最大 2 MB）</span><input type="file" accept="image/jpeg,image/png" @change="avatarFile = $event.target.files?.[0] || null"></label>
+          <p class="profile-note">姓名和账号由管理员维护，用于实名记录。头像在预约与审核中对登录用户可见。</p>
+          <p v-if="profileMessage" class="form-ok" role="status">{{ profileMessage }}</p><p v-if="profileError" class="form-error" role="alert">{{ profileError }}</p>
+          <button class="primary-button" type="submit" :disabled="savingProfile || loadingDetails || !detailsLoaded">{{ savingProfile ? '保存中…' : '保存资料' }}</button>
         </form>
       </div>
 
-      <div class="account-card">
+      <div v-if="view !== 'profile'" class="account-card">
         <h2>修改密码</h2>
         <form @submit.prevent="savePassword">
           <label class="field">
@@ -65,7 +37,7 @@
             <span>确认新密码</span>
             <input v-model="passwordForm.confirm" type="password" autocomplete="new-password" required>
           </label>
-          <p class="field-hint">新密码至少 8 位，需同时包含字母和数字。修改成功后需要重新登录。</p>
+          <p class="field-hint">新密码至少 12 位，且需同时包含字母和数字。修改成功后需要重新登录。</p>
 
           <p v-if="passwordMessage" class="form-ok">{{ passwordMessage }}</p>
           <p v-if="passwordError" class="form-error">{{ passwordError }}</p>
@@ -75,41 +47,17 @@
         </form>
       </div>
 
-      <div class="account-card account-card-wide">
-        <h2>管理员名单</h2>
-        <p v-if="adminsLoading" class="state-card">读取中…</p>
-        <div v-else-if="adminsError" class="state-card" role="alert">
-          <strong>暂时无法读取管理员名单</strong>
-          <p>{{ adminsError }}</p>
-          <button type="button" class="retry-button" @click="loadAdmins">重试</button>
-        </div>
-        <p v-else-if="admins.length === 0" class="state-card">暂无管理员数据。</p>
-        <table v-else class="admin-table">
-          <thead>
-            <tr><th>姓名</th><th>账号</th><th>角色</th><th>所属部门</th><th>最近登录</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="admin in admins" :key="admin.id">
-              <td>
-                {{ admin.name }}
-                <span v-if="admin.account === profile.account" class="status-badge badge-ok">当前登录</span>
-              </td>
-              <td class="mono">{{ admin.account }}</td>
-              <td>{{ roleLabels(admin.roles) }}</td>
-              <td>{{ admin.department || '—' }}</td>
-              <td>{{ formatTime(admin.lastLoginAt) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+
     </div>
   </section>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { changeMyPassword, getAdminList, getSessionAdmin, updateMyProfile } from '../lib/api'
+import { changeMyPassword, getSessionAdmin, getMyDetails, updateMyDetails, uploadMyAvatar, getDepartments } from '../lib/api'
+import UserAvatar from './UserAvatar.vue'
 
+const props = defineProps({ view: { type: String, default: 'all' }, allowAdminList: { type: Boolean, default: false } })
 const emit = defineEmits(['profile-changed', 'password-changed'])
 
 const ROLE_LABELS = {
@@ -127,14 +75,15 @@ function roleLabels(roles) {
 
 const profile = ref(getSessionAdmin() || {})
 const profileForm = reactive({
-  name: profile.value.name || '',
+  department: '',
   email: profile.value.email || '',
   phone: profile.value.phone || '',
 })
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirm: '' })
-const admins = ref([])
-const adminsLoading = ref(true)
-const adminsError = ref('')
+const avatarFile = ref(null)
+const departments = ref([])
+const loadingDetails = ref(false)
+const detailsLoaded = ref(false)
 
 const savingProfile = ref(false)
 const profileMessage = ref('')
@@ -149,7 +98,7 @@ function formatTime(value) {
 }
 
 function validPassword(value) {
-  return value.length >= 8 && /[a-zA-Z]/.test(value) && /\d/.test(value)
+  return value.length >= 12 && /[a-zA-Z]/.test(value) && /\d/.test(value)
 }
 
 async function saveProfile() {
@@ -157,9 +106,12 @@ async function saveProfile() {
   profileMessage.value = ''
   profileError.value = ''
   try {
-    profile.value = await updateMyProfile(profileForm)
+    await updateMyDetails(profileForm)
     profileMessage.value = '资料已保存。'
-    emit('profile-changed', profile.value)
+    if (avatarFile.value) {
+      try { await uploadMyAvatar(avatarFile.value); avatarFile.value = null }
+      catch (error) { profileError.value = `资料已保存，但头像上传失败：${error.message}` }
+    }
   } catch (error) {
     profileError.value = error.message
   } finally {
@@ -171,7 +123,7 @@ async function savePassword() {
   passwordMessage.value = ''
   passwordError.value = ''
   if (!validPassword(passwordForm.newPassword)) {
-    passwordError.value = '新密码至少 8 位，且需同时包含字母和数字。'
+    passwordError.value = '新密码至少 12 位，且需同时包含字母和数字。'
     return
   }
   if (passwordForm.newPassword !== passwordForm.confirm) {
@@ -192,17 +144,14 @@ async function savePassword() {
   }
 }
 
-async function loadAdmins() {
-  adminsLoading.value = true
-  adminsError.value = ''
-  try {
-    admins.value = await getAdminList()
-  } catch (error) {
-    adminsError.value = error.message || '管理员名单读取失败。'
-  } finally {
-    adminsLoading.value = false
-  }
-}
-
-onMounted(loadAdmins)
+onMounted(async () => {
+  if (props.view === 'password') return
+  loadingDetails.value = true
+  try { const [details, options] = await Promise.all([getMyDetails(), getDepartments()]); departments.value = options; Object.assign(profileForm, { department: details.department, email: details.email, phone: details.phone }); detailsLoaded.value = true }
+  catch (error) { profileError.value = error.status === 404 ? '个人资料接口尚未更新，请重启后端后再试。' : (error.message || '资料读取失败，请稍后重试。') }
+  finally { loadingDetails.value = false }
+})
 </script>
+<style scoped>
+.account-card{border:0;box-shadow:none;padding:0}.profile-header{display:flex;align-items:center;gap:14px;margin-bottom:22px}.profile-header :deep(.user-avatar){width:56px;height:56px;font-size:22px}.profile-header small{display:block;margin-top:5px;color:#82769a}.profile-intro{margin:-8px 0 18px;color:#82769a;font-size:13px}.profile-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}.profile-details div{padding:14px 16px;border:1px solid #ece7f5;border-radius:12px;background:#faf9fd;min-width:0}.profile-details dt{color:#82769a;font-size:12px;margin-bottom:6px}.profile-details dd{margin:0;color:#302348;font-size:14px;font-weight:600;overflow-wrap:anywhere}.profile-note{margin:18px 0 0;color:#82769a;font-size:13px}@media(max-width:480px){.profile-details{grid-template-columns:1fr}}
+</style>

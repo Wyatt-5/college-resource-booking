@@ -79,7 +79,7 @@ onMounted(loadQueue)
   <section class="return-verify">
     <div class="section-heading">
       <div>
-        <p class="eyebrow">管理后台 · 借还管理</p>
+
         <h2>归还核验</h2>
       </div>
       <button type="button" class="refresh-button" :disabled="loading" @click="loadQueue">

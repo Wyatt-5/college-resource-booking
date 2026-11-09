@@ -29,18 +29,18 @@ Mac/Linux：`cp .env.example .env`、`docker compose -f infra/compose.yaml up -d
 | `POST /api/v1/items` | 上架物品 | 可带 `initialStock`（0–500），同一事务生成库存和唯一编号 |
 | `PUT /api/v1/items/{id}/stock` | 物品和更新后的库存摘要 | 管理员设置库存总数；有未结束预约或实物非可借状态时可能拒绝减少 |
 
-首次启动时 Flyway 自动执行迁移。目前预置三间办公室和一间物资室，不预置物品。V3/V4 建立物品与图片，V5 建立账号、授权和全局审计，V6 建立物品预约，V7 建立可预约地点（预置两间会议室）与地点照片，V8 建立物品领取、归还材料、照片和幂等记录。普通物品预约在同一数据库事务中锁定物品并校验时段容量；贵重物品和地点申请由审核员处理。预约、审核和交接均写入审计日志。详见 [资源模型与物品接口说明](../docs/资源模型与物品接口说明.md)。
+首次启动时 Flyway 自动执行迁移。V1–V14 包含存放地点、物品、账号、预约和审核、借还、公告反馈、个人资料及部门；预置地点仅供本地初始化。已有数据库只执行尚未执行的迁移，不要修改已执行的迁移文件。普通物品预约在同一数据库事务中锁定物品并校验时段容量；贵重物品和地点申请由审核员处理。预约、审核和交接均写入审计日志。详见 [资源模型与物品接口说明](../docs/资源模型与物品接口说明.md)。
 
 ## 首次管理员与登录接口
 
 账号表为空时，在本地 `.env` 中临时增加 `BOOTSTRAP_ADMIN_LOGIN` 与 `BOOTSTRAP_ADMIN_PASSWORD`（至少 12 位），再启动后端。程序只会在没有任何账号时建立一位 `SYSTEM_ADMIN`，密码只存 BCrypt 哈希；账号建好后从 `.env` 移除这两行。不得把真实账号密码提交到 GitHub。生产环境应通过受保护的环境变量提供首次凭据，并配置 `SESSION_COOKIE_SECURE=true` 与 HTTPS。
 
-用户接口：`GET /api/v1/auth/csrf`、`POST /api/v1/auth/login`、`GET /api/v1/auth/me`、`POST /api/v1/auth/logout`。管理员接口：`GET/POST /api/v1/users`、`PUT /api/v1/users/{id}/grants`、`GET /api/v1/audit-logs`。具体字段见 `../contracts/openapi/openapi.yaml`。账号由系统管理员建立，无公开注册；系统管理员不能修改自己的授权。
+用户接口：`GET /api/v1/auth/csrf`、`POST /api/v1/auth/login`、`GET /api/v1/auth/me`、`POST /api/v1/auth/logout`。管理员接口：`GET/POST /api/v1/users`、`PUT /api/v1/users/{id}/grants`、`GET /api/v1/audit-logs`。具体字段见 `../contracts/openapi/openapi.yaml`。账号由系统管理员建立，无公开注册；系统管理员不能修改自己的授权。停用账号可凭相同账号和原姓名重新启用，重设密码、清除旧权限并保留历史记录；密码变化后旧会话在下次受保护请求时失效。
 
 物品预约接口：`POST /api/v1/reservations`（登录后，提交 `Idempotency-Key` 和物品 ID、开始/结束时间、用途、数量）；`GET /api/v1/me/reservations` 仅返回本人申请。普通物品库存足够时为 `CONFIRMED`，贵重物品为 `PENDING_APPROVAL`。物品须至少录入一件 `AVAILABLE` 实物，并配置提前天数与最长借用天数。
-贵重物品审核：系统管理员在网页“账号与权限”给其他账号设置审核员权限。审核员用 `GET /api/v1/review/reservations` 读取待审列表，用 `PATCH /api/v1/reservations/{id}/review` 提交 `{"decision":"APPROVE"}` 或 `{"decision":"REJECT","reason":"原因"}`。申请人不能自审；同一物品重叠时段按提交顺序先审较早申请；批准时重新检查时段库存；审核结果写审计日志。
+贵重物品审核：系统管理员在网页“账号与权限”给其他账号设置审核员权限。审核员用 `GET /api/v1/review/reservations` 读取待审列表，用 `PATCH /api/v1/reservations/{id}/review` 提交 `{"decision":"APPROVE"}` 或 `{"decision":"REJECT","reason":"原因"}`。申请人不能自审；待审核申请按提交顺序展示，由有权审核者决定；批准时重新检查时段库存，审核结果写审计日志。
 
-地点预约：`GET /api/v1/spaces` 公开列出可预约地点；有管理权限者可 `POST /api/v1/spaces` 新增地点，并通过 `POST /api/v1/spaces/{id}/image` 上传或替换 JPG/PNG 照片。照片可用 `GET /api/v1/spaces/{id}/image` 公开读取。`GET /api/v1/spaces/{id}/slots?date=YYYY-MM-DD` 返回该日每个已占用整点小时的状态。用户通过通用 `POST /api/v1/reservations` 提交 `resourceType=SPACE`、地点 ID、开始/结束时间、用途及 `Idempotency-Key`。只能申请未来一周内同一天 08:00–22:00 的整点时段，最晚在 22:00 结束。所有地点申请进入单人审核，申请人不可自审；同一时段辅导员优先，同优先级按提交顺序；批准时再次检查冲突。
+地点预约：`GET /api/v1/spaces` 公开列出可预约地点；有管理权限者可 `POST /api/v1/spaces` 新增地点，并通过 `POST /api/v1/spaces/{id}/image` 上传或替换 JPG/PNG 照片。照片可用 `GET /api/v1/spaces/{id}/image` 公开读取。`GET /api/v1/spaces/{id}/slots?date=YYYY-MM-DD` 返回该日每个已占用整点小时的状态。用户通过通用 `POST /api/v1/reservations` 提交 `resourceType=SPACE`、地点 ID、开始/结束时间、用途及 `Idempotency-Key`。只能申请未来一周内同一天 08:00–22:00 的整点时段，最晚在 22:00 结束。所有地点申请进入单人审核，申请人不可自审；重叠申请由审核员决定，批准时再次检查冲突，不按辅导员身份硬性优先。
 
 物品交接：已确认预约在使用时段内由申请人调用 `POST /api/v1/reservations/{id}/pickup`，JSON 为 `{"unitCodes":["实物编号"]}`，编号数量必须等于预约数量。归还调用 `POST /api/v1/reservations/{id}/return-submission`，使用 multipart 的 `photos`（1–6 张 JPG/PNG/WebP，单张不超过 5MB）和可选 `remark`。两个写接口都要带 `Idempotency-Key`。管理员用 `GET /api/v1/reservations?handoverStatus=RETURN_SUBMITTED` 查看权限范围内队列，并调用 `POST /api/v1/reservations/{id}/return-verification` 接受或驳回；接受后实物恢复 `AVAILABLE`，驳回原因返回申请人后可补拍重提。照片 `GET /api/v1/return-photos/{photoId}` 只允许申请人或有对应地点权限的管理员读取。
 
