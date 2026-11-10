@@ -230,7 +230,7 @@ paths:
       responses:
         '204': { description: 账号已停用 }
         '403': { description: 仅系统管理员可操作 }
-        '409': { description: 不能停用自己或目标有未完成预约 }
+        '409': { description: 不能停用自己、目标有未完成预约，或目标为最后一个系统管理员 }
   /users/me/password:
     post:
       summary: 修改当前账号密码
@@ -282,7 +282,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserProfile'
         '409':
-          description: 禁止修改自己的授权
+          description: 禁止修改自己的授权，或移除最后一个系统管理员的权限
   /audit-logs:
     get:
       summary: 系统管理员读取最近审计记录
