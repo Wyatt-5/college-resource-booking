@@ -164,9 +164,11 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 }
 
 .side-nav {
+  position: relative;
   padding: 34px 17px 26px 27px;
   border-right: 1px solid #e6e2f1;
   background: #f8f7fc;
+  transition: background-color .25s ease, border-right-color .25s ease;
 }
 
 /* 管理端：深色侧边栏与用户端区分 */
@@ -174,8 +176,7 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .mode-admin .nav-caption { color: #948ab0; }
 .mode-admin .nav-button { color: #cdc3e6; }
 .mode-admin .nav-button:hover { background: #ffffff14; }
-.mode-admin .nav-button.active { background: #fff; color: #2f2350; }
-
+.mode-admin .nav-button.active { background: transparent; color: #2f2350; }
 .nav-caption {
   margin: 0 13px 13px;
   color: #776d94;
@@ -197,7 +198,26 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
   font-weight: 600;
 }
 .nav-button:hover { background: #edeafa; }
-.nav-button.active { background: #ddd5f2; color: #3a2a63; }
+/* 激活态背景交由 .nav-indicator 滑动条承载，按钮本身只改文字色，避免底色叠加 */
+.nav-button.active { background: transparent; color: #3a2a63; }
+
+/* 侧边导航滑动指示条：随激活项平滑滑动，增强导航切换的连贯感 */
+.nav-indicator {
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  z-index: 0;
+  border-radius: 10px;
+  background: #ddd5f2;
+  transition: top .24s cubic-bezier(.4, 0, .2, 1), height .24s cubic-bezier(.4, 0, .2, 1), opacity .18s ease;
+  pointer-events: none;
+}
+.side-nav .nav-caption,
+.side-nav .nav-button { position: relative; z-index: 1; }
+/* 管理端深色侧边栏：指示条为纯白底，激活文字改回深色，与原设计一致 */
+.mode-admin .nav-indicator { background: #fff; }
+.mode-admin .nav-button.active { color: #2f2350; }
 
 .main-content { min-width: 0; padding: 32px 44px 26px; }
 .hero {
@@ -661,7 +681,8 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .filter-toggle { display: flex; align-items: center; gap: 7px; color: #3d3358; font-size: 13px; font-weight: 700; white-space: nowrap; }
 
 .items-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
-.item-card { border: 1px solid #e4dff0; border-radius: 15px; background: #fff; overflow: hidden; box-shadow: 0 3px 15px #241b3d07; }
+.item-card { border: 1px solid #e4dff0; border-radius: 15px; background: #fff; overflow: hidden; box-shadow: 0 3px 15px #241b3d07; transition: box-shadow .2s ease, transform .2s ease, border-color .2s ease; }
+.item-card:hover { transform: translateY(-3px); box-shadow: 0 10px 28px #241b3d14; border-color: #d9d0ec; }
 .item-photo { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; background: #ebe7f6; font-size: 40px; }
 .item-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .photo-grid img { width: 100%; max-height: 220px; object-fit: contain; }
@@ -722,6 +743,10 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
   }
   /* 手机上导航是横向滑动条：隐藏系统滚动条，避免出现灰色滚动条压住菜单 */
   .side-nav::-webkit-scrollbar { display: none; }
+  /* 移动端横向导航隐藏竖向滑动指示条，激活态由按钮自身背景承载 */
+  .nav-indicator { display: none; }
+  .nav-button.active { background: #ddd5f2; color: #3a2a63; }
+  .mode-admin .nav-button.active { background: #fff; color: #2f2350; }
   .nav-caption, .nav-note { display: none; }
   .nav-button {
     flex: 0 0 auto;
@@ -870,3 +895,22 @@ button:focus-visible { outline: 3px solid #e2a45a; outline-offset: 3px; }
 .pagination-bar{display:flex;align-items:center;justify-content:center;gap:14px;margin:auto 0 0;padding-top:24px;color:#817695;font-size:12px;line-height:1.4}
 .pagination-bar .refresh-button{min-height:32px;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600}
 @media(max-width:560px){.pagination-bar{gap:9px;padding-top:20px;flex-wrap:wrap}.pagination-bar .refresh-button{min-height:36px;padding:7px 10px}}
+
+/* ---------------------------------------------------------------------------
+   页面/标签切换过渡：切页时旧页淡出、新页淡入并轻微上移，营造连贯的导航感。
+   App.vue 用 <Transition name="page" mode="out-in"> 包裹 KeepAlive 页面组件。
+--------------------------------------------------------------------------- */
+.page-enter-active,
+.page-leave-active { transition: opacity .18s ease, transform .18s ease; }
+.page-enter-from { opacity: 0; transform: translateY(8px); }
+.page-leave-to { opacity: 0; transform: translateY(-6px); }
+
+/* 尊重系统「减少动态效果」偏好：关闭所有过渡与动画 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -9,7 +9,9 @@
       </div>
     </div>
     <p class="section-sub">查看账号、分配权限，或管理自己的资料和密码。</p>
-    <p v-if="successMessage" class="notice" role="status">{{ successMessage }}</p>
+    <Transition name="toast">
+      <p v-if="successMessage" class="notice" role="status">{{ successMessage }}</p>
+    </Transition>
     <BookingModal v-if="showCreate" title="新增账号" :busy="submitting" @close="showCreate = false">
     <form class="account-provision-form" @submit.prevent="submit">
       <p class="card-hint">若账号曾停用，填写原姓名可重新启用；历史记录保留，权限需重新分配。</p>
@@ -44,12 +46,16 @@
       <h3>账号列表</h3>
       <button class="refresh-button" type="button" :disabled="loading" @click="loadAccounts">刷新账号</button>
     </div>
-    <p v-if="listError" class="form-error" role="alert">{{ listError }}</p>
+    <Transition name="toast">
+      <p v-if="listError" class="form-error" role="alert">{{ listError }}</p>
+    </Transition>
     <div class="role-tabs" role="group" aria-label="按身份筛选账号">
       <button v-for="option in roleOptions" :key="option.value" type="button" :class="{active: roleFilter === option.value}" :aria-pressed="roleFilter === option.value" @click="roleFilter=option.value">{{ option.label }}</button>
     </div>
-    <p v-if="!filteredAccounts.length && !loading" class="card-hint">该分类暂无账号。</p>
-    <div class="reservation-list account-grid-list">
+    <Transition name="toast">
+      <p v-if="!filteredAccounts.length && !loading" class="card-hint">该分类暂无账号。</p>
+    </Transition>
+    <TransitionGroup tag="div" name="account-list" class="reservation-list account-grid-list">
       <article v-for="account in filteredAccounts" :key="account.id" class="item-card reservation-entry account-entry">
         <div>
           <h3>{{ account.displayName }} · {{ account.loginName }}</h3><p class="card-hint">{{ account.department || '未设置部门' }} · {{ roleOptions.find(option => option.value === accountRole(account))?.label }}<span v-if="account.id === currentUser?.id"> · 当前账号</span></p>
@@ -71,7 +77,7 @@
         <button class="link-button" type="button" :disabled="savingId !== null" @click="removeAccount(account)">移除账号</button>
         </div>
       </article>
-    </div>
+    </TransitionGroup>
     </template>
     <p v-else class="card-hint">账号创建和权限分配由系统管理员负责。</p>
   </section>
@@ -176,6 +182,14 @@ onMounted(() => { if (isSystemAdmin.value) loadAccounts() })
 </script>
 
 <style scoped>
-.account-grid-list{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));align-items:stretch}.account-entry{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:18px}.account-entry h3{overflow-wrap:anywhere;font-size:16px}.account-entry .field{margin:12px 0 0}.account-entry .account-actions{margin-top:auto;justify-content:flex-start}.account-entry .account-actions button{flex:0 1 auto}.add-department{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.department-hint{width:100%;margin:0;color:#817696;font-size:12px}.add-department .field{flex:1;min-width:0;margin:0}.add-department button{flex:0 0 auto}.role-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 18px}.role-tabs button{padding:8px 14px;border:1px solid #ded5ed;border-radius:9px;background:#fff;color:#584575}.role-tabs button.active{background:#43316d;color:white}.account-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.account-provision-form{display:grid;gap:14px}.account-provision-form .primary-button{justify-self:start}
+.account-grid-list{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));align-items:stretch}.account-entry{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:18px;transition:box-shadow .2s ease,transform .2s ease,border-color .2s ease}.account-entry:hover{transform:translateY(-2px);box-shadow:0 8px 24px #241b3d12;border-color:#d9cff0}.account-entry h3{overflow-wrap:anywhere;font-size:16px}.account-entry .field{margin:12px 0 0}.account-entry .account-actions{margin-top:auto;justify-content:flex-start}.account-entry .account-actions button{flex:0 1 auto}.add-department{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.department-hint{width:100%;margin:0;color:#817696;font-size:12px}.add-department .field{flex:1;min-width:0;margin:0}.add-department button{flex:0 0 auto}.role-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 18px}.role-tabs button{padding:8px 14px;border:1px solid #ded5ed;border-radius:9px;background:#fff;color:#584575;transition:background .2s ease,color .2s ease,border-color .2s ease}.role-tabs button:hover{border-color:#b9a9d9;color:#43316d}.role-tabs button.active{background:#43316d;color:white}.account-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.account-provision-form{display:grid;gap:14px}.account-provision-form .primary-button{justify-self:start}
+/* 提示信息淡入 + 轻微上移 */
+.toast-enter-active,.toast-leave-active{transition:opacity .25s ease,transform .25s ease}
+.toast-enter-from,.toast-leave-to{opacity:0;transform:translateY(-4px)}
+/* 账号卡片列表增删动画 */
+.account-list-enter-active,.account-list-leave-active{transition:opacity .28s ease,transform .28s ease}
+.account-list-enter-from{opacity:0;transform:translateY(8px)}
+.account-list-leave-to{opacity:0;transform:scale(.96)}
+.account-list-move{transition:transform .28s ease}
 @media(max-width:600px){.account-actions{justify-content:flex-start}.account-actions button{flex:1 1 auto}}
 </style>

@@ -17,7 +17,8 @@
           <label class="field"><span>手机号</span><input v-model.trim="profileForm.phone" type="tel" maxlength="30"></label>
           <label class="field"><span>更换头像（JPG/PNG，最大 2 MB）</span><input type="file" accept="image/jpeg,image/png" @change="avatarFile = $event.target.files?.[0] || null"></label>
           <p class="profile-note">姓名和账号由管理员维护，用于实名记录。头像在预约与审核中对登录用户可见。</p>
-          <p v-if="profileMessage" class="form-ok" role="status">{{ profileMessage }}</p><p v-if="profileError" class="form-error" role="alert">{{ profileError }}</p>
+          <Transition name="toast"><p v-if="profileMessage" class="form-ok" role="status">{{ profileMessage }}</p></Transition>
+          <Transition name="toast"><p v-if="profileError" class="form-error" role="alert">{{ profileError }}</p></Transition>
           <button class="primary-button" type="submit" :disabled="savingProfile || loadingDetails || !detailsLoaded">{{ savingProfile ? '保存中…' : '保存资料' }}</button>
         </form>
       </div>
@@ -39,8 +40,12 @@
           </label>
           <p class="field-hint">新密码至少 12 位，且需同时包含字母和数字。修改成功后需要重新登录。</p>
 
-          <p v-if="passwordMessage" class="form-ok">{{ passwordMessage }}</p>
-          <p v-if="passwordError" class="form-error">{{ passwordError }}</p>
+          <Transition name="toast">
+            <p v-if="passwordMessage" class="form-ok" role="status">{{ passwordMessage }}</p>
+          </Transition>
+          <Transition name="toast">
+            <p v-if="passwordError" class="form-error" role="alert">{{ passwordError }}</p>
+          </Transition>
           <button class="primary-button" type="submit" :disabled="savingPassword">
             {{ savingPassword ? '提交中…' : '确认修改' }}
           </button>
@@ -62,8 +67,6 @@ const emit = defineEmits(['profile-changed', 'password-changed'])
 
 const ROLE_LABELS = {
   USER: '普通用户',
-  COUNSELOR_ADMIN: '辅导员管理员',
-  RESOURCE_MANAGER: '资源管理员',
   REVIEWER: '审核员',
   SYSTEM_ADMIN: '系统管理员',
 }
@@ -136,6 +139,7 @@ async function savePassword() {
     passwordForm.oldPassword = ''
     passwordForm.newPassword = ''
     passwordForm.confirm = ''
+    passwordMessage.value = '密码已更新，请使用新密码重新登录。'
     emit('password-changed')
   } catch (error) {
     passwordError.value = error.message
@@ -153,5 +157,5 @@ onMounted(async () => {
 })
 </script>
 <style scoped>
-.account-card{border:0;box-shadow:none;padding:0}.profile-header{display:flex;align-items:center;gap:14px;margin-bottom:22px}.profile-header :deep(.user-avatar){width:56px;height:56px;font-size:22px}.profile-header small{display:block;margin-top:5px;color:#82769a}.profile-intro{margin:-8px 0 18px;color:#82769a;font-size:13px}.profile-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}.profile-details div{padding:14px 16px;border:1px solid #ece7f5;border-radius:12px;background:#faf9fd;min-width:0}.profile-details dt{color:#82769a;font-size:12px;margin-bottom:6px}.profile-details dd{margin:0;color:#302348;font-size:14px;font-weight:600;overflow-wrap:anywhere}.profile-note{margin:18px 0 0;color:#82769a;font-size:13px}@media(max-width:480px){.profile-details{grid-template-columns:1fr}}
+.account-card{border:0;box-shadow:none;padding:0}.profile-header{display:flex;align-items:center;gap:14px;margin-bottom:22px}.profile-header :deep(.user-avatar){width:56px;height:56px;font-size:22px}.profile-header small{display:block;margin-top:5px;color:#82769a}.profile-intro{margin:-8px 0 18px;color:#82769a;font-size:13px}.profile-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}.profile-details div{padding:14px 16px;border:1px solid #ece7f5;border-radius:12px;background:#faf9fd;min-width:0}.profile-details dt{color:#82769a;font-size:12px;margin-bottom:6px}.profile-details dd{margin:0;color:#302348;font-size:14px;font-weight:600;overflow-wrap:anywhere}.profile-note{margin:18px 0 0;color:#82769a;font-size:13px}.toast-enter-active,.toast-leave-active{transition:opacity .25s ease,transform .25s ease}.toast-enter-from,.toast-leave-to{opacity:0;transform:translateY(-4px)}@media(max-width:480px){.profile-details{grid-template-columns:1fr}}
 </style>
