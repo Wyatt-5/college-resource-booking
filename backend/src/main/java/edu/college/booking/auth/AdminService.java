@@ -79,6 +79,8 @@ public class AdminService {
         if (actor.id() == targetId) throw new ApiProblem(HttpStatus.CONFLICT, "SELF_DISABLE_FORBIDDEN", "不能移除当前登录的账号");
         Account target = accounts.findById(targetId).orElseThrow(() -> new ApiProblem(HttpStatus.NOT_FOUND, "NOT_FOUND", "账号不存在"));
         if (accounts.hasUnfinishedBookings(targetId)) throw new ApiProblem(HttpStatus.CONFLICT, "USER_HAS_BOOKINGS", "该账号仍有待处理预约或未完成借还，请先处理");
+        if (accounts.isSystemAdmin(targetId) && accounts.countActiveSystemAdmins() <= 1)
+            throw new ApiProblem(HttpStatus.CONFLICT, "LAST_SYSTEM_ADMIN", "不能停用最后一个系统管理员");
         UserProfile before = accounts.profile(target);
         accounts.disable(targetId);
         audit.record(actor.id(), "USER_DISABLED", "USER", targetId, before, accounts.profile(accounts.findById(targetId).orElseThrow()));
@@ -129,6 +131,9 @@ public class AdminService {
         }
         if (!input.grants().isEmpty() && input.reviewer())
             throw new ApiProblem(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "请选择一种账号身份");
+        boolean keepsSystemAdmin = input.grants().stream().anyMatch(g -> "SYSTEM_ADMIN".equals(g.role()));
+        if (accounts.isSystemAdmin(targetId) && !keepsSystemAdmin && accounts.countActiveSystemAdmins() <= 1)
+            throw new ApiProblem(HttpStatus.CONFLICT, "LAST_SYSTEM_ADMIN", "不能移除最后一个系统管理员的权限");
         UserProfile before = accounts.profile(target);
         accounts.replaceGrants(targetId, input.grants(), input.reviewer(), actor.id());
         UserProfile after = accounts.profile(target);

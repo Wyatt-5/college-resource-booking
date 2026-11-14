@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getSessionAdmin, logoutAdmin, refreshAdminSession, MANAGEMENT_DEMO } from './lib/api'
 import { nextTabAfterClose } from './lib/pageTabs.js'
 import ItemStockList from './components/ItemStockList.vue'
@@ -138,6 +138,23 @@ function keepActiveNavVisible() {
   }
 }
 watch([activeSection, mode], () => nextTick(keepActiveNavVisible))
+
+// 侧边导航滑动指示条：跟随当前激活项平滑移动
+const navButtons = ref({})
+const navIndicator = ref({ top: 0, height: 0, visible: false })
+function syncNavIndicator() {
+  const el = navButtons.value[activeSection.value]
+  if (!el) { navIndicator.value.visible = false; return }
+  // offsetTop 相对 offsetParent(.side-nav) 的 padding-box 顶部，与指示条 absolute 定位基准一致
+  navIndicator.value = {
+    top: el.offsetTop,
+    height: el.offsetHeight,
+    visible: true,
+  }
+}
+watch([activeSection, mode, () => visibleTabs.value.length], () => nextTick(syncNavIndicator))
+onMounted(() => { nextTick(syncNavIndicator); window.addEventListener('resize', syncNavIndicator) })
+onUnmounted(() => window.removeEventListener('resize', syncNavIndicator))
 </script>
 
 <template>
@@ -176,10 +193,12 @@ watch([activeSection, mode], () => nextTick(keepActiveNavVisible))
 
     <div class="layout" :class="`mode-${mode}`">
       <nav ref="navRef" class="side-nav" aria-label="主导航">
+        <span class="nav-indicator" :style="{ top: `${navIndicator.top}px`, height: `${navIndicator.height}px`, opacity: navIndicator.visible ? 1 : 0 }" aria-hidden="true"></span>
         <p class="nav-caption">{{ groups[mode].caption }}</p>
         <button
           v-for="section in sections.filter((item) => item.group === mode && item.key !== 'announcements' && (item.key !== 'login' || !adminUser) && (item.group !== 'admin' || canManageItems || item.key === 'approval'))"
           :key="section.key"
+          :ref="(el) => { navButtons[section.key] = el }"
           type="button"
           class="nav-button"
           :class="{ active: activeSection === section.key }"
@@ -203,11 +222,13 @@ watch([activeSection, mode], () => nextTick(keepActiveNavVisible))
         <div class="workspace-page">
         <p v-if="mode === 'admin' && enableManagementDemo" class="notice" role="status">管理端演示：操作仅改变临时数据，刷新页面会重置，不会保存到数据库。</p>
         <template v-for="tab in openTabs" :key="`${sessionGeneration}-${tab.key}`">
-          <KeepAlive>
-            <component v-if="tab.key === activeSection && tab.group === mode" :is="pageComponents[tab.key]" v-bind="pageProps(tab.key)"
-              @open-location="openLocation" @open-all="openAllItems" @back-to-locations="selectSection('locations')"
-              @login-requested="showLogin = true" @profile-changed="adminUser = $event" @password-changed="onLogout" />
-          </KeepAlive>
+          <Transition name="page" mode="out-in">
+            <KeepAlive>
+              <component v-if="tab.key === activeSection && tab.group === mode" :is="pageComponents[tab.key]" v-bind="pageProps(tab.key)"
+                @open-location="openLocation" @open-all="openAllItems" @back-to-locations="selectSection('locations')"
+                @login-requested="showLogin = true" @profile-changed="adminUser = $event" @password-changed="onLogout" />
+            </KeepAlive>
+          </Transition>
         </template>
         </div>
       </main>
