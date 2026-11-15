@@ -50,7 +50,12 @@ function requestClose() {
 <template>
   <Teleport to="body">
     <dialog ref="dialog" class="booking-dialog" :class="{ compact, closing }" :aria-label="title" @cancel.prevent="!busy && requestClose()" @click="!busy && backdrop($event)">
-      <header class="booking-dialog-head"><h2>{{ title }}</h2><button class="refresh-button" type="button" :disabled="busy" @click="requestClose()">关闭</button></header>
+      <header class="booking-dialog-head">
+        <h2>{{ title }}</h2>
+        <button class="dialog-close" type="button" aria-label="关闭" :disabled="busy" @click="requestClose()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+        </button>
+      </header>
       <div class="booking-dialog-body"><slot /></div>
     </dialog>
   </Teleport>
@@ -58,15 +63,19 @@ function requestClose() {
 
 <style scoped>
 /* 呼出式卡片：从下方中间浮起，关闭时沿原路径沉回（从哪里来、回哪里去） */
-.booking-dialog{box-sizing:border-box;width:min(850px,calc(100vw - 32px));max-height:90dvh;margin:auto;padding:0;border:1px solid #e5def2;border-radius:22px;background:#fff;color:#2d2148;box-shadow:0 24px 90px #21143740;overflow:auto;overscroll-behavior:contain;opacity:0;transform:translateY(48px) scale(.92);transition:opacity .26s cubic-bezier(.4,0,.2,1),transform .26s cubic-bezier(.4,0,.2,1)}
+.booking-dialog{box-sizing:border-box;width:min(800px,calc(100vw - 32px));max-height:90dvh;margin:auto;padding:0;border:1px solid #e5def2;border-radius:22px;background:#fff;color:#2d2148;box-shadow:0 24px 90px #21143740;overflow:auto;overscroll-behavior:contain;opacity:0;transform:translateY(48px) scale(.92);transition:opacity .26s cubic-bezier(.4,0,.2,1),transform .26s cubic-bezier(.4,0,.2,1)}
 .booking-dialog.is-open{opacity:1;transform:translateY(0) scale(1)}
 .booking-dialog.closing{opacity:0;transform:translateY(48px) scale(.92)}
-.booking-dialog.compact{width:min(460px,calc(100vw - 32px));height:auto;max-height:90dvh;margin:auto;border:1px solid #e5def2;border-radius:18px;inset:0}
+.booking-dialog.compact{width:min(420px,calc(100vw - 32px));height:fit-content;max-height:90dvh;margin:auto;border:1px solid #e5def2;border-radius:18px;inset:0}
 .booking-dialog::backdrop{background:#24173788;backdrop-filter:blur(3px);animation:backdrop-in .26s ease}
 .booking-dialog.closing::backdrop{animation:backdrop-out .26s ease forwards}
 @keyframes backdrop-in{from{opacity:0}to{opacity:1}}
 @keyframes backdrop-out{from{opacity:1}to{opacity:0}}
-.booking-dialog-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;background:#fff;padding:18px 26px;border-bottom:1px solid #eee8f5}.booking-dialog-head h2{margin:0;font-size:22px}.booking-dialog-body{padding:22px 26px}
+.booking-dialog-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;background:#fff;padding:16px 24px;border-bottom:1px solid #eee8f5}.booking-dialog-head h2{margin:0;font-size:20px}.booking-dialog-body{padding:20px 24px}
+.dialog-close{display:grid;place-items:center;flex:0 0 auto;width:40px;height:40px;padding:8px;border:0;border-radius:8px;background:transparent;color:inherit}
+.dialog-close:hover:not(:disabled){background:#f2eefb}
+.dialog-close:disabled{opacity:.5;cursor:not-allowed}
+.dialog-close svg{width:20px;height:20px}
 /* 手机端把预约弹窗变成整屏面板：内容多时整页一起滚，不再出现弹窗里套时间表的两层滚动条 */
 @media(max-width:600px){
   .booking-dialog{width:100%;max-width:none;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0;inset:0;transform:translateY(100%);transition:opacity .26s cubic-bezier(.4,0,.2,1),transform .26s cubic-bezier(.4,0,.2,1)}
@@ -74,7 +83,7 @@ function requestClose() {
   .booking-dialog.closing{transform:translateY(100%)}
   .booking-dialog-head{padding:calc(12px + env(safe-area-inset-top)) 16px 12px;gap:12px}
   .booking-dialog-head h2{font-size:18px;line-height:1.35;overflow-wrap:anywhere}
-  .booking-dialog-head .refresh-button{flex:0 0 auto;min-height:40px;padding:8px 16px}
+  .dialog-close{width:44px;height:44px}
   .booking-dialog-body{padding:16px 16px calc(24px + env(safe-area-inset-bottom))}
 }
 </style>

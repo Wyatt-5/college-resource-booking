@@ -1,4 +1,5 @@
 <script setup>
+import { useReloadOnReturn } from '../../lib/useReloadOnReturn'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createReservation, getSpaces, getSpaceSlots } from '../../lib/api'
 import { createRequestKey } from '../../lib/requestKey'
@@ -105,16 +106,17 @@ async function submit() {
   finally { saving.value = false }
 }
 onMounted(loadSpaces)
+useReloadOnReturn(loadSpaces)
 </script>
 
 <template>
   <section class="content-section space-page">
     <div class="section-heading">
       <div><h1>预约活动地点</h1></div>
-      <button class="refresh-button" type="button" :disabled="loading" @click="loadSpaces">刷新</button>
+
     </div>
     <p v-if="bookingMessage" class="success-banner" role="status">{{ bookingMessage }}</p>
-    <p class="section-sub">查看照片与介绍，选择未来一周内 08:00–22:00 的整点时段。地点申请均需审核。</p>
+    <p class="section-sub">选择未来一周内的整点时段，地点预约需审核。</p>
     <p v-if="error" class="state-card error-card" role="alert">{{ error }}</p>
     <p v-if="loading" class="state-card" role="status">正在读取地点…</p>
     <p v-else-if="!spaces.length && !error" class="state-card">暂时没有开放预约的地点。</p>
@@ -129,13 +131,13 @@ onMounted(loadSpaces)
       </article>
     </div>
     <BookingModal v-if="selectedSpace" :title="`${selectedSpace.name} · 预约`" :busy="saving" @close="closeSpace">
-      <div class="space-booking-head"><div><p class="eyebrow">{{ selectedSpace.name }}</p><h2>选择日期与时间</h2></div><span>最早 08:00 · 最晚 22:00</span></div>
+      <div class="space-booking-head"><div><h2>选择日期与时间</h2></div><span>最早 08:00 · 最晚 22:00</span></div>
       <div class="space-calendar" role="group" aria-label="未来一周日期">
         <button v-for="day in days" :key="day.key" type="button" :disabled="saving" :class="{ active: selectedDate === day.key }" @click="selectDate(day.key)">
           <small>{{ day.weekday }}</small><strong>{{ day.day }}</strong><span>{{ day.month }}</span>
         </button>
       </div>
-      <p class="space-hint">每格一小时，点击选择，再点已选时段的两端可以取消；连续多小时可依次点击相邻时段。已确认时段不可选，待审核时段仍可申请。</p>
+
       <p v-if="slotLoading" class="space-hint" role="status">正在读取预约表…</p>
       <p v-else-if="slotError" class="error-card" role="alert">{{ slotError }} <button class="link-button" @click="loadSlots">重试</button></p>
       <div v-else class="space-timetable">
@@ -149,7 +151,7 @@ onMounted(loadSpaces)
           </button>
         </div>
       </div>
-      <p v-if="!selectionActive" class="space-hint">请选择预约时段。</p>
+
       <form class="space-form" @submit.prevent="submit">
         <div class="field-row">
           <label class="field"><span>开始时间</span><select v-model.number="startHour" @change="selectionActive = true" required><option v-for="hour in startOptions" :key="hour" :value="hour">{{ hourText(hour) }}</option></select></label>
@@ -164,10 +166,10 @@ onMounted(loadSpaces)
 </template>
 
 <style scoped>
-.space-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:20px;margin:26px 0 32px}
+.space-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px;margin:16px 0 24px}
 .space-card{background:#fff;border:1px solid #e5def2;border-radius:20px;overflow:hidden;box-shadow:0 8px 28px #33224f0a;transition:transform .2s,border-color .2s}.space-card:hover,.space-card.chosen{transform:translateY(-2px);border-color:#a891d5}
-.space-cover{height:180px;overflow:hidden;position:relative;background:linear-gradient(135deg,#f1edfa,#e2dbf2);color:#755b9b;font-size:64px}.space-cover img{display:block;width:100%;height:100%;object-fit:cover}.space-cover span{position:absolute;inset:0;display:grid;place-items:center}
-.space-card-body{position:relative;background:#fff;padding:20px;display:flex;flex-direction:column;gap:12px}.space-card-body p{margin:0;flex:1}.space-card-top{display:flex;align-items:start;justify-content:space-between;gap:12px}.space-card h2{font-size:22px;margin:0;color:#281c47}.space-card-top span{font-size:13px;color:#786693;white-space:nowrap}.space-card p{color:#6b5f80;min-height:48px;line-height:1.6}.space-card .primary-button{width:100%}
+.space-cover{height:160px;overflow:hidden;position:relative;background:linear-gradient(135deg,#f1edfa,#e2dbf2);color:#755b9b;font-size:64px}.space-cover img{display:block;width:100%;height:100%;object-fit:cover}.space-cover span{position:absolute;inset:0;display:grid;place-items:center}
+.space-card-body{position:relative;background:#fff;padding:16px;display:flex;flex-direction:column;gap:12px}.space-card-body p{margin:0;flex:1}.space-card-top{display:flex;align-items:start;justify-content:space-between;gap:12px}.space-card h2{font-size:18px;margin:0;color:#281c47}.space-card-top span{font-size:13px;color:#786693;white-space:nowrap}.space-card p{color:#6b5f80;min-height:40px;line-height:1.6}.space-card .primary-button{width:100%}
 .space-booking{background:#fff;border:1px solid #e4dcf1;border-radius:22px;padding:clamp(18px,3vw,32px);box-shadow:0 8px 28px #33224f0a}.space-booking-head{display:flex;justify-content:space-between;gap:16px;align-items:end}.space-booking-head h2{margin:6px 0 0;color:#281c47}.space-booking-head>span,.space-hint{font-size:14px;color:#796b8b}
 .space-calendar{display:grid;grid-template-columns:repeat(8,minmax(65px,1fr));gap:8px;overflow-x:auto;padding:20px 0 8px}.space-calendar button{border:1px solid #e5def2;border-radius:13px;background:#faf8fd;color:#514269;min-height:78px;display:grid;place-items:center;cursor:pointer}.space-calendar button.active{background:#594284;color:#fff;border-color:#594284}.space-calendar button strong{font-size:20px}.space-calendar button small,.space-calendar button span{font-size:12px}
 .space-hint{margin:12px 0 16px;line-height:1.6}.space-timetable{border:1px solid #eee8f5;border-radius:15px;overflow:hidden}.space-band{display:grid;grid-template-columns:110px repeat(2,minmax(0,1fr));gap:1px;background:#eee8f5;border-bottom:1px solid #eee8f5}.space-band:last-child{border-bottom:0}.space-band-label{background:#faf8fd;color:#77668d;display:flex;flex-direction:column;justify-content:center;padding:10px 16px}.space-band-label strong{color:#392852}

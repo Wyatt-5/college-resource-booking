@@ -21,13 +21,19 @@ public class ItemService {
         return list(location,keyword,page,size,available,null,"public");
     }
     public ItemPage list(Long location,String keyword,int page,int size,boolean available,String status,String scope){
+        return list(location,keyword,page,size,available,status,scope,null,"DEFAULT");
+    }
+    public ItemPage list(Long location,String keyword,int page,int size,boolean available,String status,String scope,
+            Boolean valuable,String sort){
         if(page<0||size<1||size>100||(location!=null&&location<=0)||keyword==null||keyword.length()>100)
             throw CatalogException.invalid("query","页码、页大小、地点或关键词无效");
         if(status!=null&&!Set.of("ACTIVE","INACTIVE").contains(status))throw CatalogException.invalid("status","状态无效");
         if(!Set.of("public","managed").contains(scope))throw CatalogException.invalid("scope","仅支持 public 或 managed");
+        if(sort==null || !Set.of("DEFAULT","CREATED_DESC","NAME_ASC","AVAILABLE_DESC").contains(sort))
+            throw CatalogException.invalid("sort","排序方式无效");
         CatalogAccess.Actor actor="managed".equals(scope)?access.current():null;
         if(actor==null&&"INACTIVE".equals(status))throw new CatalogException(HttpStatus.FORBIDDEN,"FORBIDDEN","停用物品只对授权管理员开放");
-        return repo.page(location,keyword.trim(),page,size,available,status,actor);
+        return repo.page(location,keyword.trim(),page,size,available,status,actor,valuable,sort);
     }
     public Item detail(long id){return detail(id,false);}
     public Item detail(long id,boolean managed){

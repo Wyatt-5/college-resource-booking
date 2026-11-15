@@ -14,7 +14,7 @@
     </Transition>
     <BookingModal v-if="showCreate" title="新增账号" :busy="submitting" @close="showCreate = false">
     <form class="account-provision-form" @submit.prevent="submit">
-      <p class="card-hint">若账号曾停用，填写原姓名可重新启用；历史记录保留，权限需重新分配。</p>
+
       <label class="field"><span>登录账号</span>
         <input v-model.trim="loginName" type="text" minlength="3" maxlength="40" pattern="[A-Za-z0-9._-]+" required>
       </label>
@@ -27,7 +27,7 @@
       <div v-if="department === null" class="add-department">
         <label class="field"><span>新部门名称</span><input v-model.trim="newDepartment" type="text" maxlength="100" placeholder="输入部门名称" @keydown.enter.prevent="addDepartment"></label>
         <button class="refresh-button" type="button" :disabled="addingDepartment || !newDepartment" @click="addDepartment">{{ addingDepartment ? '添加中…' : '添加' }}</button>
-        <p class="department-hint">添加后，其他用户也可以选择此部门。</p>
+
       </div>
       <label class="field"><span>初始密码（至少 12 位）</span>
         <input v-model="password" type="password" minlength="12" autocomplete="new-password" required>
@@ -44,7 +44,7 @@
     <template v-if="isSystemAdmin">
     <div class="section-heading">
       <h3>账号列表</h3>
-      <button class="refresh-button" type="button" :disabled="loading" @click="loadAccounts">刷新账号</button>
+
     </div>
     <Transition name="toast">
       <p v-if="listError" class="form-error" role="alert">{{ listError }}</p>
@@ -59,8 +59,8 @@
       <article v-for="account in filteredAccounts" :key="account.id" class="item-card reservation-entry account-entry">
         <div>
           <h3>{{ account.displayName }} · {{ account.loginName }}</h3><p class="card-hint">{{ account.department || '未设置部门' }} · {{ roleOptions.find(option => option.value === accountRole(account))?.label }}<span v-if="account.id === currentUser?.id"> · 当前账号</span></p>
-          <p v-if="account.id === currentUser?.id" class="card-hint">不能修改自己的授权。</p>
-          <template v-else-if="grantForms[account.id]">
+
+          <template v-if="account.id !== currentUser?.id && grantForms[account.id]">
             <label class="field"><span>账号身份</span>
               <select v-model="grantForms[account.id].role">
                 <option value="USER">普通用户</option>
@@ -79,11 +79,12 @@
       </article>
     </TransitionGroup>
     </template>
-    <p v-else class="card-hint">账号创建和权限分配由系统管理员负责。</p>
+
   </section>
 </template>
 
 <script setup>
+import { useReloadOnReturn } from '../../lib/useReloadOnReturn'
 import { computed, onMounted, ref } from 'vue'
 import BookingModal from '../../components/BookingModal.vue'
 import AccountSettings from '../../components/AccountSettings.vue'
@@ -179,10 +180,11 @@ async function submit() {
   }
 }
 onMounted(() => { if (isSystemAdmin.value) loadAccounts() })
+useReloadOnReturn(() => { if (isSystemAdmin.value) loadAccounts() })
 </script>
 
 <style scoped>
-.account-grid-list{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));align-items:stretch}.account-entry{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:18px;transition:box-shadow .2s ease,transform .2s ease,border-color .2s ease}.account-entry:hover{transform:translateY(-2px);box-shadow:0 8px 24px #241b3d12;border-color:#d9cff0}.account-entry h3{overflow-wrap:anywhere;font-size:16px}.account-entry .field{margin:12px 0 0}.account-entry .account-actions{margin-top:auto;justify-content:flex-start}.account-entry .account-actions button{flex:0 1 auto}.add-department{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.department-hint{width:100%;margin:0;color:#817696;font-size:12px}.add-department .field{flex:1;min-width:0;margin:0}.add-department button{flex:0 0 auto}.role-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 18px}.role-tabs button{padding:8px 14px;border:1px solid #ded5ed;border-radius:9px;background:#fff;color:#584575;transition:background .2s ease,color .2s ease,border-color .2s ease}.role-tabs button:hover{border-color:#b9a9d9;color:#43316d}.role-tabs button.active{background:#43316d;color:white}.account-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.account-provision-form{display:grid;gap:14px}.account-provision-form .primary-button{justify-self:start}
+.account-grid-list{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));align-items:stretch}.account-entry{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:16px;transition:box-shadow .2s ease,transform .2s ease,border-color .2s ease}.account-entry:hover{transform:translateY(-2px);box-shadow:0 8px 24px #241b3d12;border-color:#d9cff0}.account-entry h3{overflow-wrap:anywhere;font-size:16px}.account-entry .field{margin:12px 0 0}.account-entry .account-actions{margin-top:auto;justify-content:flex-start}.account-entry .account-actions button{flex:0 1 auto}.add-department{display:flex;align-items:end;gap:8px;flex-wrap:wrap}.department-hint{width:100%;margin:0;color:#817696;font-size:12px}.add-department .field{flex:1;min-width:0;margin:0}.add-department button{flex:0 0 auto}.role-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 16px}.role-tabs button{padding:8px 12px;min-height:36px;border:1px solid #ded5ed;border-radius:9px;background:#fff;color:#584575;transition:background .2s ease,color .2s ease,border-color .2s ease}.role-tabs button:hover{border-color:#b9a9d9;color:#43316d}.role-tabs button.active{background:#43316d;color:white}.account-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.account-provision-form{display:grid;gap:16px}.account-provision-form .primary-button{justify-self:start}
 /* 提示信息淡入 + 轻微上移 */
 .toast-enter-active,.toast-leave-active{transition:opacity .25s ease,transform .25s ease}
 .toast-enter-from,.toast-leave-to{opacity:0;transform:translateY(-4px)}
@@ -191,5 +193,10 @@ onMounted(() => { if (isSystemAdmin.value) loadAccounts() })
 .account-list-enter-from{opacity:0;transform:translateY(8px)}
 .account-list-leave-to{opacity:0;transform:scale(.96)}
 .account-list-move{transition:transform .28s ease}
-@media(max-width:600px){.account-actions{justify-content:flex-start}.account-actions button{flex:1 1 auto}}
+@media(max-width:600px){
+  .section-heading:has(> .account-actions) > div:first-child{flex-basis:100%}
+  .section-heading > .account-actions{width:100%}
+  .account-actions{justify-content:flex-start}
+  .account-actions button{flex:1 1 auto}
+}
 </style>

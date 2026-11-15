@@ -1,4 +1,5 @@
 <script setup>
+import { useReloadOnReturn } from '../lib/useReloadOnReturn'
 import { onMounted, ref } from 'vue'
 import { getReturnVerifications, submitReturnVerification } from '../lib/api'
 import { createRequestKey } from '../lib/requestKey'
@@ -73,6 +74,7 @@ async function decide(submission, decision) {
 }
 
 onMounted(loadQueue)
+useReloadOnReturn(loadQueue)
 </script>
 
 <template>
@@ -82,9 +84,7 @@ onMounted(loadQueue)
 
         <h2>归还核验</h2>
       </div>
-      <button type="button" class="refresh-button" :disabled="loading" @click="loadQueue">
-        {{ loading ? '读取中…' : '重新读取' }}
-      </button>
+
     </div>
 
     <p v-if="banner" class="success-banner" role="status">{{ banner }}</p>

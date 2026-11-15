@@ -8,7 +8,7 @@ const statusFilter=ref(''), keyword=ref('')
 const size=20
 const fmt=value=>new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})
 const states={CONFIRMED:'已确认',PENDING_APPROVAL:'待审核',CANCELLED:'已取消',REJECTED:'已拒绝',EXPIRED:'已过期'}
-const decisions={APPROVED:'审核通过',REJECTED:'审核拒绝',AUTO_CONFIRMED:'系统自动确认'}
+const decisions={APPROVED:'审核通过',REJECTED:'审核拒绝',AUTO_CONFIRMED:'系统自动确认',EXPIRED:'系统自动过期'}
 async function load(){loading.value=true;error.value='';try{const data=await getBookingLogs({itemId:props.itemId,status:statusFilter.value||undefined,keyword:keyword.value||undefined,page:page.value,size});rows.value=data.content;total.value=data.totalElements}catch(e){error.value=e.message||'读取预约记录失败'}finally{loading.value=false}}
 function applyFilters(){page.value=0;load()}
 function resetFilters(){statusFilter.value='';keyword.value='';page.value=0;load()}
@@ -17,7 +17,7 @@ onMounted(load)
 </script>
 <template>
   <section class="booking-log" :class="{ 'in-modal': inModal }">
-    <div v-if="!inModal" class="section-heading"><h3>{{ itemId ? '该物品的预约记录' : '预约日志' }}</h3><button class="refresh-button" @click="load">刷新</button></div>
+    <div v-if="!inModal" class="section-heading"><h3>{{ itemId ? '该物品的预约记录' : '预约日志' }}</h3></div>
     <div class="log-filters">
       <label class="field"><span>状态</span>
         <select v-model="statusFilter" @change="applyFilters">

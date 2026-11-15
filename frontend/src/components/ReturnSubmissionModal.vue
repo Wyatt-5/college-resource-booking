@@ -59,7 +59,7 @@ async function submit() {
 
 <template>
   <BookingModal :title="`提交归还 · ${reservation.itemName}`" @close="emit('close')">
-    <p class="return-help">请拍摄能看清物品整体及主要配件的现场照片。管理员核验通过前，实物不会恢复可借。</p>
+
     <label class="return-upload">
       归还照片（1–6张，单张不超过5MB）
       <input type="file" accept="image/jpeg,image/png,image/webp" multiple @change="choose">

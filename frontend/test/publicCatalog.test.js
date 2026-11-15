@@ -6,12 +6,18 @@ test('public list sends filters and pagination without relying on management moc
   let requested
   const page = { content: [{ id: 7, unitSummary: { available: 1, total: 3 } }], page: 1, size: 12, totalElements: 13 }
   const api = createPublicCatalog({ fetchImpl: async url => { requested = url; return Response.json(page) } })
-  assert.deepEqual(await api.list({ keyword: '相机 & %', locationId: 2, onlyAvailable: true, page: 1 }), page)
+  assert.deepEqual(await api.list({ keyword: '相机 & %', locationId: 2, onlyAvailable: true, isValuable: false, sort: 'AVAILABLE_DESC', page: 1 }), page)
   const query = new URL(requested, 'http://localhost').searchParams
   assert.equal(query.get('keyword'), '相机 & %')
   assert.equal(query.get('locationId'), '2')
   assert.equal(query.get('onlyAvailable'), 'true')
   assert.equal(query.get('page'), '1')
+  assert.equal(query.get('isValuable'), 'false')
+  assert.equal(query.get('sort'), 'AVAILABLE_DESC')
+  await api.list()
+  const reset = new URL(requested, 'http://localhost').searchParams
+  assert.equal(reset.has('isValuable'), false)
+  assert.equal(reset.get('sort'), 'CREATED_DESC')
 })
 
 test('old array contract is rejected instead of silently displaying an empty list', async () => {

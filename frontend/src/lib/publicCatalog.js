@@ -17,9 +17,11 @@ export function createPublicCatalog({ fetchImpl = (...args) => fetch(...args), b
     return data
   }
   return {
-    async list({ locationId = '', keyword = '', onlyAvailable = false, page = 0, size = 12 } = {}) {
+    async list({ locationId = '', keyword = '', onlyAvailable = false, isValuable = '', sort = 'CREATED_DESC', page = 0, size = 12 } = {}) {
       const query = new URLSearchParams({ keyword, onlyAvailable: String(onlyAvailable), page: String(page), size: String(size) })
       if (locationId !== '') query.set('locationId', String(locationId))
+      if (isValuable !== '') query.set('isValuable', String(isValuable))
+      query.set('sort', sort)
       const data = await get(`/items?${query}`)
       if (!Array.isArray(data?.content) || !Number.isSafeInteger(data.totalElements)
           || !Number.isSafeInteger(data.page) || !Number.isSafeInteger(data.size)) {
