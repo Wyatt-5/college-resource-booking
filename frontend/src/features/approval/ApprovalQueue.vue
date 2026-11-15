@@ -17,7 +17,6 @@
         <div>
           <h3>
             {{ request.resourceType === 'SPACE' ? '地点' : '物品' }} · {{ request.itemName }}
-            <span v-if="request.priorityTier === 'COUNSELOR'" class="priority-badge">辅导员申请</span>
           </h3>
           <div class="applicant-line"><span>申请人：</span><UserAvatar :user-id="request.applicantId" :name="request.applicantName" /><span>{{ request.applicantName || ('账号 ' + request.applicantId) }}</span></div>
           <p class="approval-time">{{ formatTime(request.startAt) }} 至 {{ formatTime(request.endAt) }}</p>

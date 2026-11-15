@@ -147,18 +147,18 @@ class ItemReservationDatabaseTest {
     }
 
     @Test
-    void counselorApplicantIsLabelledInQueueWithoutBlockingOthers() throws Exception {
+    void counselorApplicantIsStillReviewableWhenQueueHasNoTier() throws Exception {
         db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
         db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
         db.update("INSERT INTO role_grants(user_id,role) VALUES (?,'COUNSELOR_ADMIN')",firstId);
         try {
             long id=create(firstLogin,"counselor-queue-1");
-            // 辅导员身份只作为标签返回，不再是写死的 STANDARD
+            // 整合后定稿：队列不按身份区分，priorityTier 一律为 STANDARD（改这里要同步 OpenAPI 与前端）
             mvc.perform(get("/api/v1/review/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.content[0].id").value(id))
-                    .andExpect(jsonPath("$.content[0].priorityTier").value("COUNSELOR"));
-            // 标签不阻断审核：审核人仍可正常批准
+                    .andExpect(jsonPath("$.content[0].priorityTier").value("STANDARD"));
+            // 无论是否辅导员，审核人都能批准
             mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
                     .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CONFIRMED"));

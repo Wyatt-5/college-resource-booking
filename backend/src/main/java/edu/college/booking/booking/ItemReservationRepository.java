@@ -167,7 +167,8 @@ public class ItemReservationRepository {
             int quantity, String status, long submissionSeq, Instant submittedAt,
             String priorityTier, int competingPending) {}
 
-    // 按提交顺序展示；辅导员身份只作为标签提示，不改变排序、也不阻断审核人批准任一方。
+    // 待审申请按提交顺序展示，审核人决定如何处理冲突。
+    // 整合后定稿：priorityTier 固定返回 STANDARD，队列不再按申请人身份区分或排序。
     public List<PendingItem> pending(int size, long offset) {
         return jdbc.query("""
                 SELECT * FROM (
@@ -175,9 +176,6 @@ public class ItemReservationRepository {
                            COALESCE(i.name, s.name) AS item_name, r.applicant_id,
                            u.display_name AS applicant_name, r.start_at, r.end_at, r.purpose,
                            r.quantity, r.status, r.submission_seq, r.submitted_at,
-                           CASE WHEN EXISTS (SELECT 1 FROM role_grants rg
-                                     WHERE rg.user_id = r.applicant_id AND rg.role = 'COUNSELOR_ADMIN')
-                                THEN 'COUNSELOR' ELSE 'STANDARD' END AS priority_tier,
                            (SELECT count(*) FROM reservations o
                               WHERE o.status = 'PENDING_APPROVAL' AND o.start_at > CURRENT_TIMESTAMP AND o.id <> r.id
                                 AND o.start_at < r.end_at AND o.end_at > r.start_at
@@ -197,7 +195,7 @@ public class ItemReservationRepository {
                 rs.getTimestamp("end_at").toInstant(), rs.getString("purpose"), rs.getInt("quantity"),
                 rs.getString("status"), rs.getLong("submission_seq"),
                 rs.getTimestamp("submitted_at").toInstant(),
-                rs.getString("priority_tier"), rs.getInt("competing")),
+                "STANDARD", rs.getInt("competing")),
                 size, offset);
     }
     public long countPending() {

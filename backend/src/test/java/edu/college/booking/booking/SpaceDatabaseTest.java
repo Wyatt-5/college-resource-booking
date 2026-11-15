@@ -84,11 +84,11 @@ class SpaceDatabaseTest {
         assertEquals("PENDING_APPROVAL", student.status());
         assertEquals("PENDING_APPROVAL", counselor.status());
 
-        // 申请按提交顺序展示；辅导员身份只作为标签提示，审核人可以选择其中一条
+        // 申请按提交顺序展示，审核人可以选择其中一条
         var queue = reservations.pending(auth(reviewerLogin), 0, 50).content();
         var counselorEntry = queue.stream().filter(entry -> entry.id() == counselor.id()).findFirst().orElseThrow();
         var studentEntry = queue.stream().filter(entry -> entry.id() == student.id()).findFirst().orElseThrow();
-        assertEquals("COUNSELOR", counselorEntry.priorityTier());
+        assertEquals("STANDARD", counselorEntry.priorityTier());
         assertEquals("STANDARD", studentEntry.priorityTier());
         assertEquals(1, studentEntry.competingPending());
 

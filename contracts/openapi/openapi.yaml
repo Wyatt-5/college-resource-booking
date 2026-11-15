@@ -1933,8 +1933,8 @@ components:
         submittedAt: { type: string, format: date-time }
         priorityTier:
           type: string
-          enum: [STANDARD, COUNSELOR]
-          description: 申请人身份标签，仅用于审核台提示，不改变排序也不阻断审核人批准任一方
+          enum: [STANDARD]
+          description: 当前申请不再区分辅导员优先级
         competingPending:
           type: integer
           minimum: 0
