@@ -168,7 +168,6 @@ public class ItemReservationRepository {
             String priorityTier, int competingPending) {}
 
     // 待审申请按提交顺序展示，审核人决定如何处理冲突。
-    // 整合后定稿：priorityTier 固定返回 STANDARD，队列不再按申请人身份区分或排序。
     public List<PendingItem> pending(int size, long offset) {
         return jdbc.query("""
                 SELECT * FROM (
