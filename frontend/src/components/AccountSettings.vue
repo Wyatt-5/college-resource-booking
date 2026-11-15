@@ -16,7 +16,7 @@
           <label class="field"><span>邮箱</span><input v-model.trim="profileForm.email" type="email" maxlength="254"></label>
           <label class="field"><span>手机号</span><input v-model.trim="profileForm.phone" type="tel" maxlength="30"></label>
           <label class="field"><span>更换头像（JPG/PNG，最大 2 MB）</span><input type="file" accept="image/jpeg,image/png" @change="avatarFile = $event.target.files?.[0] || null"></label>
-          <p class="profile-note">姓名和账号由管理员维护，用于实名记录。头像在预约与审核中对登录用户可见。</p>
+
           <Transition name="toast"><p v-if="profileMessage" class="form-ok" role="status">{{ profileMessage }}</p></Transition>
           <Transition name="toast"><p v-if="profileError" class="form-error" role="alert">{{ profileError }}</p></Transition>
           <button class="primary-button" type="submit" :disabled="savingProfile || loadingDetails || !detailsLoaded">{{ savingProfile ? '保存中…' : '保存资料' }}</button>
@@ -38,7 +38,7 @@
             <span>确认新密码</span>
             <input v-model="passwordForm.confirm" type="password" autocomplete="new-password" required>
           </label>
-          <p class="field-hint">新密码至少 12 位，且需同时包含字母和数字。修改成功后需要重新登录。</p>
+
 
           <Transition name="toast">
             <p v-if="passwordMessage" class="form-ok" role="status">{{ passwordMessage }}</p>
@@ -157,5 +157,5 @@ onMounted(async () => {
 })
 </script>
 <style scoped>
-.account-card{border:0;box-shadow:none;padding:0}.profile-header{display:flex;align-items:center;gap:14px;margin-bottom:22px}.profile-header :deep(.user-avatar){width:56px;height:56px;font-size:22px}.profile-header small{display:block;margin-top:5px;color:#82769a}.profile-intro{margin:-8px 0 18px;color:#82769a;font-size:13px}.profile-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}.profile-details div{padding:14px 16px;border:1px solid #ece7f5;border-radius:12px;background:#faf9fd;min-width:0}.profile-details dt{color:#82769a;font-size:12px;margin-bottom:6px}.profile-details dd{margin:0;color:#302348;font-size:14px;font-weight:600;overflow-wrap:anywhere}.profile-note{margin:18px 0 0;color:#82769a;font-size:13px}.toast-enter-active,.toast-leave-active{transition:opacity .25s ease,transform .25s ease}.toast-enter-from,.toast-leave-to{opacity:0;transform:translateY(-4px)}@media(max-width:480px){.profile-details{grid-template-columns:1fr}}
+.account-card{border:0;box-shadow:none;padding:0}.profile-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}.profile-header :deep(.user-avatar){width:48px;height:48px;font-size:20px}.profile-header small{display:block;margin-top:5px;color:#82769a}.profile-intro{margin:-8px 0 18px;color:#82769a;font-size:13px}.profile-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}.profile-details div{padding:14px 16px;border:1px solid #ece7f5;border-radius:12px;background:#faf9fd;min-width:0}.profile-details dt{color:#82769a;font-size:12px;margin-bottom:6px}.profile-details dd{margin:0;color:#302348;font-size:14px;font-weight:600;overflow-wrap:anywhere}.profile-note{margin:16px 0 0;color:#82769a;font-size:13px}.toast-enter-active,.toast-leave-active{transition:opacity .25s ease,transform .25s ease}.toast-enter-from,.toast-leave-to{opacity:0;transform:translateY(-4px)}@media(max-width:480px){.profile-details{grid-template-columns:1fr}}
 </style>

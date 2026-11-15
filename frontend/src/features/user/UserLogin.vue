@@ -3,7 +3,7 @@
     <div class="login-card">
 
       <h2>登录共用资源系统</h2>
-      <p class="section-sub">使用学院分配的账号。登录后可预约物品和地点；有管理权限的账号还可进入管理工作台。</p>
+      <p class="section-sub">使用学院分配的账号登录</p>
       <form class="login-form" @submit.prevent="submit">
         <label class="field"><span>账号</span>
           <input v-model.trim="account" type="text" autocomplete="username" required>

@@ -35,7 +35,7 @@ async function submit() {
 
 <template>
   <BookingModal :title="`确认领取 · ${reservation.itemName}`" @close="emit('close')">
-    <p class="pickup-help">请按实物标签填写编号。预约数量为 {{ reservation.quantity }}，提交后编号将与本次预约绑定。</p>
+
     <div class="pickup-fields">
       <label v-for="(_, index) in unitCodes" :key="index">
         第 {{ index + 1 }} 件实物编号

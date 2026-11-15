@@ -1,4 +1,5 @@
 <script setup>
+import { useReloadOnReturn } from '../lib/useReloadOnReturn'
 import { onMounted, ref } from 'vue'
 import { getItemUnits, getItems, getLocations, updateItemUnit, updateItem, getItemImages, uploadItemImage, deleteItemImage, archiveItem } from '../lib/api'
 import ItemCreateForm from './ItemCreateForm.vue'
@@ -54,7 +55,7 @@ async function saveDetails(item) {
     try {
       unitsByItem.value[item.id]=await getItemUnits(item.id)
     } catch {
-      editMessage.value='物品信息与库存已保存；实物编号暂时无法刷新，请重新读取。'
+      editMessage.value='物品信息与库存已保存；实物编号暂时无法读取，请稍后重新进入此页。'
     }
   }catch(cause){unitError.value=cause.message||'保存失败，物品设置未更改。'}
   finally{editSaving.value=false}
@@ -151,6 +152,7 @@ onMounted(async () => {
   }
   loadItems()
 })
+useReloadOnReturn(async () => { locations.value = await getLocations().catch(() => []); loadItems() })
 </script>
 
 <template>
@@ -164,7 +166,7 @@ onMounted(async () => {
         <h2>库存与实物编号</h2>
       </div>
       <div class="unit-input-row">
-        <button type="button" class="refresh-button" :disabled="loading" @click="loadItems()">{{ loading ? '读取中…' : '重新读取' }}</button>
+
         <button type="button" class="primary-button" @click="creating = true">新增物品</button>
       </div>
     </div>
@@ -237,12 +239,12 @@ onMounted(async () => {
                     <label class="field"><span>库存总数</span><input v-model.number="stockTargets[item.id]" type="number" min="0" max="500" required></label>
                   </div>
                   <button class="primary-button" type="button" :disabled="editSaving" @click="saveDetails(item)">{{ editSaving ? '保存中…' : '保存物品设置' }}</button>
-                  <p class="card-hint">实物编号自动生成；已借出或待核验的实物不能直接移除。</p>
+
                   <p v-if="editMessage" class="notice" role="status">{{ editMessage }}</p>
                   <div class="item-edit-photos"><h3>展示照片</h3><div v-for="image in images[item.id]" :key="image.id" class="item-edit-photo"><img :src="image.url" :alt="image.fileName"><button class="link-button" type="button" @click="removePhoto(item,image)">删除</button></div><input type="file" accept="image/jpeg,image/png,image/webp" @change="imageFile=$event.target.files?.[0]||null"><button class="refresh-button" type="button" :disabled="!imageFile||editSaving" @click="addPhoto(item)">上传照片</button></div>
                   <h3>实物编号与状态</h3>
                   <div class="unit-input-row">
-                    <span class="card-hint">需要增加或减少实物时，在上方修改“库存总数”并保存。</span>
+
                   </div>
                   <p v-if="unitError" class="field-error">{{ unitError }}</p>
                   <ul v-if="unitsByItem[item.id]?.length" class="unit-list">
@@ -262,7 +264,7 @@ onMounted(async () => {
                       </select>
                     </li>
                   </ul>
-                  <p v-else class="card-hint">当前库存为0，可在上方调整库存数量。</p>
+                  <p v-else class="card-hint">暂无实物</p>
                   <BookingLog :item-id="item.id" />
                 </template>
       </template>

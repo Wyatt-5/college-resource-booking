@@ -16,7 +16,8 @@ public class ItemRepository {
           (SELECT count(*) FROM item_units u WHERE u.item_id=i.id AND u.status='AVAILABLE') AS available_units
         FROM items i JOIN locations l ON l.id=i.location_id
         """;
-    public ItemPage page(Long location,String keyword,int page,int size,boolean available,String status,CatalogAccess.Actor manager) {
+    public ItemPage page(Long location,String keyword,int page,int size,boolean available,String status,CatalogAccess.Actor manager,
+            Boolean valuable,String sort) {
         Map<String,Object> p=new HashMap<>();
         p.put("keyword",keyword);p.put("size",size);p.put("offset",(long)page*size);
         String where=" WHERE i.archived_at IS NULL AND (strpos(lower(i.name),lower(:keyword))>0 OR strpos(lower(i.description),lower(:keyword))>0)";
@@ -27,8 +28,15 @@ public class ItemRepository {
         }
         if(location!=null){where+=" AND i.location_id=:location";p.put("location",location);}
         if(status!=null){where+=" AND i.status=:status";p.put("status",status);}
+        if(valuable!=null){where+=" AND i.is_valuable=:valuable";p.put("valuable",valuable);}
         if(available)where+=" AND EXISTS(SELECT 1 FROM item_units a WHERE a.item_id=i.id AND a.status='AVAILABLE')";
-        List<Item> rows=db.query(SELECT+where+" ORDER BY i.id LIMIT :size OFFSET :offset",p,this::map);
+        String order = switch (sort) {
+            case "CREATED_DESC" -> "i.created_at DESC, i.id DESC";
+            case "NAME_ASC" -> "i.name ASC, i.id DESC";
+            case "AVAILABLE_DESC" -> "available_units DESC, i.id DESC";
+            default -> "i.id ASC";
+        };
+        List<Item> rows=db.query(SELECT+where+" ORDER BY "+order+" LIMIT :size OFFSET :offset",p,this::map);
         long total=db.queryForObject("SELECT count(*) FROM items i JOIN locations l ON l.id=i.location_id"+where,p,Long.class);
         return new ItemPage(rows,page,size,total);
     }

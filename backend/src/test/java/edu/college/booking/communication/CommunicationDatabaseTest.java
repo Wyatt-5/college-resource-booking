@@ -60,4 +60,67 @@ class CommunicationDatabaseTest {
         mvc.perform(get("/api/v1/feedback").with(user(loginDetails.loadUserByUsername(alice)))).andExpect(status().isOk()).andExpect(jsonPath("$.content[0].response").value("已修好"));
         assertEquals(2,db.queryForObject("SELECT count(*) FROM audit_logs WHERE action='FEEDBACK_HANDLED' AND target_id=?",Integer.class,id));
     }
+
+    private UsernamePasswordAuthenticationToken actor(String login) {
+        return new UsernamePasswordAuthenticationToken(login, "", java.util.List.of());
+    }
+
+    @Test void announcementReadStateBelongsToEachAccountAndSurvivesANewSession() throws Exception {
+        var announcement = service.createAnnouncement(actor(reviewer),
+                new CommunicationService.AnnouncementInput("新公告", "下周活动安排", "PUBLISHED"));
+        var version = new CommunicationService.AnnouncementVersion(announcement.id(), announcement.updatedAt());
+        String body = json.writeValueAsString(new CommunicationService.AnnouncementReadInput(java.util.List.of(version)));
+
+        assertTrue(service.unreadAnnouncements(actor(alice), 0, 100).content().stream()
+                .anyMatch(row -> row.id() == announcement.id()));
+        mvc.perform(post("/api/v1/announcements/read")
+                .with(user(loginDetails.loadUserByUsername(alice))).with(csrf())
+                .contentType("application/json").content(body)).andExpect(status().isNoContent());
+        // A repeated acknowledgement is safe, and the next authenticated session sees the same state.
+        mvc.perform(post("/api/v1/announcements/read")
+                .with(user(loginDetails.loadUserByUsername(alice))).with(csrf())
+                .contentType("application/json").content(body)).andExpect(status().isNoContent());
+        assertFalse(service.unreadAnnouncements(actor(alice), 0, 100).content().stream()
+                .anyMatch(row -> row.id() == announcement.id()));
+        assertTrue(service.unreadAnnouncements(actor(bob), 0, 100).content().stream()
+                .anyMatch(row -> row.id() == announcement.id()));
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM announcement_reads WHERE announcement_id=?",
+                Integer.class, announcement.id()));
+        mvc.perform(get("/api/v1/announcements/unread").with(user(loginDetails.loadUserByUsername(alice))))
+                .andExpect(status().isOk());
+    }
+
+    @Test void updatedAndRepublishedNoticesRemainUnreadWhenAnOldVersionIsAcknowledged() {
+        var announcement = service.createAnnouncement(actor(reviewer),
+                new CommunicationService.AnnouncementInput("原公告", "原内容", "PUBLISHED"));
+        var oldVersion = new CommunicationService.AnnouncementReadInput(java.util.List.of(
+                new CommunicationService.AnnouncementVersion(announcement.id(), announcement.updatedAt())));
+        service.markAnnouncementsRead(actor(alice), oldVersion);
+        db.update("UPDATE announcements SET content='新内容', updated_at=updated_at + INTERVAL '1 second' WHERE id=?",
+                announcement.id());
+        service.markAnnouncementsRead(actor(alice), oldVersion);
+        assertTrue(service.unreadAnnouncements(actor(alice), 0, 100).content().stream()
+                .anyMatch(row -> row.id() == announcement.id()));
+
+        db.update("UPDATE announcements SET status='WITHDRAWN' WHERE id=?", announcement.id());
+        assertFalse(service.unreadAnnouncements(actor(alice), 0, 100).content().stream()
+                .anyMatch(row -> row.id() == announcement.id()));
+        db.update("UPDATE announcements SET status='PUBLISHED', updated_at=updated_at + INTERVAL '1 second' WHERE id=?",
+                announcement.id());
+        assertTrue(service.unreadAnnouncements(actor(alice), 0, 100).content().stream()
+                .anyMatch(row -> row.id() == announcement.id()));
+    }
+
+    @Test void unreadAndReadEndpointsRequireAuthenticationAndWritesRequireCsrf() throws Exception {
+        mvc.perform(get("/api/v1/announcements/unread")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/announcements/read").with(csrf())
+                .contentType("application/json").content("{\"announcements\":[]}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/announcements/read").with(user(loginDetails.loadUserByUsername(alice)))
+                .contentType("application/json").content("{\"announcements\":[]}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/announcements/read").with(user(loginDetails.loadUserByUsername(alice))).with(csrf())
+                .contentType("application/json").content("{\"announcements\":[{\"id\":1}]}"))
+                .andExpect(status().isBadRequest());
+    }
 }

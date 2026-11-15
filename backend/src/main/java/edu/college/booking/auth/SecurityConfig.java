@@ -6,6 +6,13 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Map;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.annotation.Order;
+import org.springframework.security.authorization.AuthorizationDecision;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.context.NullSecurityContextRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -45,6 +52,34 @@ public class SecurityConfig {
     }
 
     @Bean
+    @Order(1)
+    SecurityFilterChain internalTaskSecurity(HttpSecurity http, JsonMapper mapper,
+            @Value("${tasks.service-token:}") String token) throws Exception {
+        http.securityMatcher("/api/v1/internal/tasks/**");
+        http.securityContext(config -> config.securityContextRepository(new NullSecurityContextRepository()));
+        http.sessionManagement(config -> config.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+        http.csrf(AbstractHttpConfigurer::disable);
+        http.formLogin(AbstractHttpConfigurer::disable);
+        http.httpBasic(AbstractHttpConfigurer::disable);
+        http.logout(AbstractHttpConfigurer::disable);
+        http.requestCache(AbstractHttpConfigurer::disable);
+        http.authorizeHttpRequests(auth -> auth.anyRequest().access((authentication, context) -> {
+            String header = context.getRequest().getHeader("Authorization");
+            boolean allowed = token.length() >= 32 && header != null
+                    && MessageDigest.isEqual(("Bearer " + token).getBytes(StandardCharsets.UTF_8),
+                        header.getBytes(StandardCharsets.UTF_8));
+            return new AuthorizationDecision(allowed);
+        }));
+        http.exceptionHandling(errors -> errors
+                .authenticationEntryPoint((request, response, cause) ->
+                    writeError(mapper, response, HttpStatus.UNAUTHORIZED, "INVALID_SERVICE_TOKEN", "任务服务认证失败"))
+                .accessDeniedHandler((request, response, cause) ->
+                    writeError(mapper, response, HttpStatus.UNAUTHORIZED, "INVALID_SERVICE_TOKEN", "任务服务认证失败")));
+        return http.build();
+    }
+
+    @Bean
+    @Order(2)
     SecurityFilterChain securityFilterChain(HttpSecurity http, SecurityContextRepository contexts,
             JsonMapper mapper) throws Exception {
         http.securityContext(config -> config.securityContextRepository(contexts));

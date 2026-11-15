@@ -17,10 +17,10 @@
 
     <div class="section-heading location-overview-heading">
       <div>
-        <p class="eyebrow">按地点查找</p>
+
         <h2>办公室与物资室</h2>
       </div>
-      <button class="refresh-button" type="button" :disabled="loading" @click="load">{{ loading ? '读取中…' : '刷新' }}</button>
+
     </div>
 
     <p v-if="loading" class="state-card" role="status">正在读取存放地点…</p>
@@ -41,11 +41,12 @@
         <span class="location-overview-arrow" aria-hidden="true">→</span>
       </button>
     </div>
-    <p class="location-overview-note">当前可借数量仅反映实物状态，具体预约时段的余量以提交时检查为准。</p>
+
   </section>
 </template>
 
 <script setup>
+import { useReloadOnReturn } from '../../lib/useReloadOnReturn'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { getLocations, getPublicItems } from '../../lib/api'
 import { loadResourceOverview } from './overview.js'
@@ -69,4 +70,5 @@ async function load() {
 }
 onMounted(load)
 onUnmounted(() => { ++requestVersion })
+useReloadOnReturn(load)
 </script>

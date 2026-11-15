@@ -7,14 +7,14 @@ const rows=ref([]), page=ref(0), total=ref(0), error=ref(''), loading=ref(false)
 const size=20
 const fmt=value=>new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})
 const states={CONFIRMED:'已确认',PENDING_APPROVAL:'待审核',CANCELLED:'已取消',REJECTED:'已拒绝',EXPIRED:'已过期'}
-const decisions={APPROVED:'审核通过',REJECTED:'审核拒绝',AUTO_CONFIRMED:'系统自动确认'}
+const decisions={APPROVED:'审核通过',REJECTED:'审核拒绝',AUTO_CONFIRMED:'系统自动确认',EXPIRED:'系统自动过期'}
 async function load(){loading.value=true;error.value='';try{const data=await getBookingLogs({itemId:props.itemId,page:page.value,size});rows.value=data.content;total.value=data.totalElements}catch(e){error.value=e.message||'读取预约记录失败'}finally{loading.value=false}}
 watch(()=>props.itemId,()=>{page.value=0;load()})
 onMounted(load)
 </script>
 <template>
   <section class="booking-log" :class="{ 'in-modal': inModal }">
-    <div v-if="!inModal" class="section-heading"><h3>{{ itemId ? '该物品的预约记录' : '预约日志' }}</h3><button class="refresh-button" @click="load">刷新</button></div>
+    <div v-if="!inModal" class="section-heading"><h3>{{ itemId ? '该物品的预约记录' : '预约日志' }}</h3></div>
     <p v-if="error" class="error-card" role="alert">{{ error }}</p>
     <p v-else-if="loading" class="card-hint">正在读取…</p>
     <p v-else-if="!rows.length" class="card-hint">暂无预约记录。</p>
