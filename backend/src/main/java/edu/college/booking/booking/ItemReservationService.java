@@ -23,6 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ItemReservationService {
+    private static final java.util.Set<String> LOG_STATUSES =
+            java.util.Set.of("PENDING_APPROVAL", "CONFIRMED", "REJECTED", "CANCELLED", "EXPIRED");
     public record CreateRequest(String resourceType, Long resourceId, String startAt,
             String endAt, String purpose, Integer quantity) {}
     public record ReservationPage(java.util.List<ItemReservation> content, int page,
@@ -140,11 +142,18 @@ public class ItemReservationService {
                 page, size, reservations.countMine(applicant.id()));
     }
     @Transactional(readOnly=true)
-    public LogPage log(Authentication authentication, Long itemId, int page, int size) {
+    public LogPage log(Authentication authentication, Long itemId, String status, String keyword,
+            int page, int size) {
         authorization.requireSpaceManager(authentication);
         if(page<0||size<1||size>100||itemId!=null&&itemId<=0)throw invalid("日志查询参数无效");
         if(itemId!=null) items.required(itemId,false);
-        return new LogPage(reservations.log(itemId,size,(long)page*size),page,size,reservations.countLog(itemId));
+        String state=status==null||status.isBlank()?null:status.trim();
+        if(state!=null&&!LOG_STATUSES.contains(state))throw invalid("日志状态筛选值无效");
+        String kw=keyword==null||keyword.isBlank()?null:keyword.trim();
+        if(kw!=null&&kw.length()>50)throw invalid("关键字不能超过 50 个字符");
+        String pattern=kw==null?null:"%"+kw+"%";
+        return new LogPage(reservations.log(itemId,state,pattern,size,(long)page*size),
+                page,size,reservations.countLog(itemId,state,pattern));
     }
     @Transactional
     public ItemReservation cancel(Authentication authentication,long id) {

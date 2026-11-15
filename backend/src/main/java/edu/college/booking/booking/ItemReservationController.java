@@ -42,9 +42,10 @@ public class ItemReservationController {
     }
     @GetMapping("/management/reservations")
     public ItemReservationService.LogPage log(Authentication authentication,
-            @RequestParam(required=false) Long itemId,@RequestParam(defaultValue="0") int page,
-            @RequestParam(defaultValue="20") int size) {
-        return service.log(authentication,itemId,page,size);
+            @RequestParam(required=false) Long itemId,
+            @RequestParam(required=false) String status,@RequestParam(required=false) String keyword,
+            @RequestParam(defaultValue="0") int page,@RequestParam(defaultValue="20") int size) {
+        return service.log(authentication,itemId,status,keyword,page,size);
     }
     @GetMapping("/items/{itemId}/availability")
     public ItemReservationService.Availability availability(@PathVariable long itemId,

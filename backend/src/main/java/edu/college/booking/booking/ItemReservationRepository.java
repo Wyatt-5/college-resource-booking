@@ -110,7 +110,7 @@ public class ItemReservationRepository {
             Instant submittedAt, String purpose, int quantity, String status,
             String reviewerName, String decision, String decisionReason, Instant reviewedAt) {}
 
-    public List<BookingLog> log(Long itemId, int size, long offset) {
+    public List<BookingLog> log(Long itemId, String status, String keyword, int size, long offset) {
         return jdbc.query("""
                 SELECT r.*, u.display_name AS applicant_name, u.login_name,
                        rv.display_name AS reviewer_name,
@@ -121,6 +121,9 @@ public class ItemReservationRepository {
                 LEFT JOIN items i ON i.id = r.item_id
                 LEFT JOIN bookable_spaces s ON s.id = r.space_id
                 WHERE (CAST(? AS BIGINT) IS NULL OR r.item_id = ?)
+                  AND (CAST(? AS VARCHAR) IS NULL OR r.status = ?)
+                  AND (CAST(? AS VARCHAR) IS NULL OR u.display_name ILIKE ? OR u.login_name ILIKE ?
+                       OR COALESCE(i.name, s.name) ILIKE ?)
                 ORDER BY r.submitted_at DESC, r.id DESC LIMIT ? OFFSET ?
                 """, (rs, row) -> new BookingLog(rs.getLong("id"), rs.getString("resource_type"),
                 "ITEM".equals(rs.getString("resource_type")) ? rs.getLong("item_id") : rs.getLong("space_id"),
@@ -131,11 +134,19 @@ public class ItemReservationRepository {
                 rs.getString("reviewer_name"), rs.getString("decision"),
                 rs.getString("decision_reason"),
                 rs.getTimestamp("reviewed_at") == null ? null : rs.getTimestamp("reviewed_at").toInstant()),
-                itemId, itemId, size, offset);
+                itemId, itemId, status, status, keyword, keyword, keyword, keyword, size, offset);
     }
-    public long countLog(Long itemId) {
-        return jdbc.queryForObject("SELECT count(*) FROM reservations WHERE (CAST(? AS BIGINT) IS NULL OR item_id=?)",
-                Long.class,itemId,itemId);
+    public long countLog(Long itemId, String status, String keyword) {
+        return jdbc.queryForObject("""
+                SELECT count(*) FROM reservations r
+                JOIN users u ON u.id = r.applicant_id
+                LEFT JOIN items i ON i.id = r.item_id
+                LEFT JOIN bookable_spaces s ON s.id = r.space_id
+                WHERE (CAST(? AS BIGINT) IS NULL OR r.item_id = ?)
+                  AND (CAST(? AS VARCHAR) IS NULL OR r.status = ?)
+                  AND (CAST(? AS VARCHAR) IS NULL OR u.display_name ILIKE ? OR u.login_name ILIKE ?
+                       OR COALESCE(i.name, s.name) ILIKE ?)
+                """, Long.class, itemId, itemId, status, status, keyword, keyword, keyword, keyword);
     }
     public ItemReservation cancel(long id) {
         int changed=jdbc.update("""
@@ -156,7 +167,7 @@ public class ItemReservationRepository {
             int quantity, String status, long submissionSeq, Instant submittedAt,
             String priorityTier, int competingPending) {}
 
-    // 待审申请按提交顺序展示，审核人决定如何处理冲突。
+    // 按提交顺序展示；辅导员身份只作为标签提示，不改变排序、也不阻断审核人批准任一方。
     public List<PendingItem> pending(int size, long offset) {
         return jdbc.query("""
                 SELECT * FROM (
@@ -164,6 +175,9 @@ public class ItemReservationRepository {
                            COALESCE(i.name, s.name) AS item_name, r.applicant_id,
                            u.display_name AS applicant_name, r.start_at, r.end_at, r.purpose,
                            r.quantity, r.status, r.submission_seq, r.submitted_at,
+                           CASE WHEN EXISTS (SELECT 1 FROM role_grants rg
+                                     WHERE rg.user_id = r.applicant_id AND rg.role = 'COUNSELOR_ADMIN')
+                                THEN 'COUNSELOR' ELSE 'STANDARD' END AS priority_tier,
                            (SELECT count(*) FROM reservations o
                               WHERE o.status = 'PENDING_APPROVAL' AND o.start_at > CURRENT_TIMESTAMP AND o.id <> r.id
                                 AND o.start_at < r.end_at AND o.end_at > r.start_at
@@ -183,7 +197,7 @@ public class ItemReservationRepository {
                 rs.getTimestamp("end_at").toInstant(), rs.getString("purpose"), rs.getInt("quantity"),
                 rs.getString("status"), rs.getLong("submission_seq"),
                 rs.getTimestamp("submitted_at").toInstant(),
-                "STANDARD", rs.getInt("competing")),
+                rs.getString("priority_tier"), rs.getInt("competing")),
                 size, offset);
     }
     public long countPending() {
