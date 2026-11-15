@@ -10,7 +10,8 @@
 | --- | --- |
 | 了解项目规则和本周任务 | [开发约束](docs/开发约束.md)、[下周联调安排（建议稿）](docs/2026-11-09至11-15联调安排.md) |
 | 看实际进展和未完成项 | [开发日志](docs/开发日志.md) |
-| 改物品、地点或预约接口 | [资源与现有接口](docs/资源模型与物品接口说明.md)、`contracts/openapi/openapi.yaml`、对应后端 Controller |
+| 改物品、地点或预约接口 | [资源与现有接口](docs/资源模型与物品接口说明.md)、[预约接口](booking%20and%20approval/预约接口设计.md)、[状态说明](booking%20and%20approval/预约状态图.md)、OpenAPI及对应Controller |
+| 验证预约、过期和未归还提醒 | [预约测试说明](booking%20and%20approval/预约并发测试用例.md)、[任务服务说明](docs/独立任务服务接口草案.md) |
 | 改账号或权限 | [账号与权限矩阵](docs/账号与权限矩阵.md) |
 | 启动某个子项目 | `backend/README.md`、`frontend/README.md`、`worker/README.md` |
 
