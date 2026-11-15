@@ -16,7 +16,7 @@
     <form class="account-provision-form" @submit.prevent="submit">
       <p class="card-hint">若账号曾停用，填写原姓名可重新启用；历史记录保留，权限需重新分配。</p>
       <label class="field"><span>登录账号</span>
-        <input v-model.trim="loginName" type="text" minlength="3" maxlength="40" pattern="[A-Za-z0-9._-]+" required>
+        <input v-model.trim="loginName" type="text" minlength="3" maxlength="40" pattern="[A-Za-z0-9._\-]+" required>
       </label>
       <label class="field"><span>姓名或显示名称</span>
         <input v-model.trim="displayName" type="text" maxlength="100" required>

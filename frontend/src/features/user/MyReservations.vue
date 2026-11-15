@@ -12,11 +12,18 @@
     <div v-else class="reservation-list my-reservation-grid">
       <article v-for="reservation in reservations" :key="reservation.id" class="item-card reservation-entry">
         <div class="reservation-entry-main">
-          <div class="reservation-entry-head"><h3>{{ reservation.resourceType === 'SPACE' ? '地点 · ' : '物品 · ' }}{{ reservation.itemName }}</h3><span :class="['status-badge', badgeClass(reservation.status)]">{{ displayStatus(reservation) }}</span></div>
+          <div class="reservation-entry-head"><h3>{{ reservation.resourceType === 'SPACE' ? '地点 · ' : '物品 · ' }}{{ reservation.itemName }}</h3><span :class="['status-badge', reservationBadgeClass(reservation)]">{{ displayStatus(reservation) }}</span></div>
           <p class="reservation-time">{{ formatTime(reservation.startAt) }} 至 {{ formatTime(reservation.endAt) }}</p>
           <p>{{ reservation.resourceType === 'ITEM' ? `数量 ${reservation.quantity} · ` : '' }}{{ reservation.purpose }}</p>
+          <ol v-if="reservation.resourceType === 'ITEM' && reservation.status === 'CONFIRMED' && reservation.handoverStatus" class="handover-progress" aria-label="借还进度">
+            <li v-for="(label, index) in HANDOVER_STEPS" :key="label" :class="handoverStepState(reservation.handoverStatus, index)">
+              <span class="progress-dot" aria-hidden="true">{{ handoverStepState(reservation.handoverStatus, index) === 'done' ? '✓' : index + 1 }}</span>
+              <small>{{ label }}</small>
+            </li>
+          </ol>
+          <p v-if="reservation.resourceType === 'ITEM' && handoverGuidance(reservation.handoverStatus)" class="handover-guidance">{{ handoverGuidance(reservation.handoverStatus) }}</p>
           <p v-if="pickupHint(reservation)" class="pickup-hint">{{ pickupHint(reservation) }}</p>
-          <p v-if="reservation.handoverStatus === 'RETURN_REJECTED'" class="rejection-reason">核验驳回：{{ reservation.lastReturnReason || '请补充照片后重新提交' }}</p>
+          <div v-if="reservation.handoverStatus === 'RETURN_REJECTED'" class="rejection-reason" role="alert"><strong>核验未通过</strong><span>{{ reservation.lastReturnReason || '请补充照片后重新提交' }}</span></div>
         </div>
         <div class="reservation-actions">
           <button class="refresh-button" type="button" @click="selected=reservation">查看详情</button>
@@ -51,6 +58,7 @@ import { getMyReservations, cancelMyReservation } from '../../lib/api'
 import BookingModal from '../../components/BookingModal.vue'
 import PickupConfirmationModal from '../../components/PickupConfirmationModal.vue'
 import ReturnSubmissionModal from '../../components/ReturnSubmissionModal.vue'
+import { HANDOVER_STEPS, handoverGuidance, handoverStepState, reservationBadgeClass } from '../../lib/handoverState'
 
 const props = defineProps({ currentUser: { type: Object, default: null } })
 const emit = defineEmits(['login-requested'])
@@ -75,7 +83,6 @@ const pickupHint = reservation => {
 }
 const canReturn = reservation => reservation.resourceType === 'ITEM' && ['CHECKED_OUT', 'RETURN_REJECTED'].includes(reservation.handoverStatus)
 const canCancel = reservation => ['CONFIRMED', 'PENDING_APPROVAL'].includes(reservation.status) && (!reservation.handoverStatus || reservation.handoverStatus === 'NOT_PICKED_UP') && new Date(reservation.startAt) > new Date()
-const badgeClass = status => ({ CONFIRMED: 'badge-ok', PENDING_APPROVAL: 'badge-pending', REJECTED: 'badge-reject', CANCELLED: 'badge-off', EXPIRED: 'badge-off' })[status] || 'badge-normal'
 
 async function load() {
   if (!props.currentUser) return
@@ -103,7 +110,18 @@ onUnmounted(() => window.clearInterval(clockTimer))
 <style scoped>
 .my-reservation-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));align-items:stretch}
 .pickup-hint{color:#665b7e;line-height:1.6}
-.rejection-reason{color:#a53e31;font-weight:700}
+.rejection-reason{display:grid;gap:3px;border:1px solid #efc1b4;border-radius:10px;padding:10px 12px;background:#fff5f1;color:#8f3a25}
+.rejection-reason strong{font-size:13px}.rejection-reason span{font-size:12px;line-height:1.6}
+.handover-guidance{color:#65567e!important;font-size:12px!important}
+.handover-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;list-style:none;margin:10px 0 4px;padding:0}
+.handover-progress li{position:relative;display:grid;justify-items:center;gap:5px;color:#9a90ad;text-align:center}
+.handover-progress li:not(:last-child)::after{content:'';position:absolute;left:calc(50% + 13px);right:calc(-50% + 13px);top:11px;height:2px;background:#e3ddef}
+.handover-progress .progress-dot{position:relative;z-index:1;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#eeeaf5;color:#716782;font-size:11px;font-weight:800}
+.handover-progress li.done::after{background:#7a62ad}.handover-progress li.done .progress-dot{background:#6a509d;color:#fff}
+.handover-progress li.current .progress-dot{box-shadow:0 0 0 3px #ddd3f0;background:#fff;color:#51377f;border:2px solid #6a509d}
+.handover-progress li.rejected .progress-dot{box-shadow:0 0 0 3px #fae5df;background:#fff;color:#9b3d29;border:2px solid #bd5942}
+.handover-progress li.current small{color:#51377f;font-weight:700}.handover-progress li.rejected small{color:#9b3d29;font-weight:700}
+.handover-progress small{font-size:10px;line-height:1.3}
 /* 我的预约：标题与状态同一行，时间与用途分层，操作按钮独立成块，手机上整行可点 */
 .reservation-entry{display:flex;flex-direction:column;align-items:stretch;gap:14px;padding:18px}
 .reservation-entry-main{display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -125,5 +143,6 @@ onUnmounted(() => window.clearInterval(clockTimer))
   .reservation-actions button{flex:1 1 100%}
   .reservation-detail{grid-template-columns:1fr;gap:4px}
   .reservation-detail dt{margin-top:9px}
+  .handover-progress small{font-size:9px}
 }
 </style>
