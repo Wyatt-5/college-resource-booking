@@ -28,8 +28,17 @@
           <label class="field"><span>拒绝原因</span><input v-model.trim="reasons[request.id]" type="text" maxlength="300" placeholder="拒绝时必填"></label>
         </div>
         <div class="approval-actions">
-          <button class="primary-button" type="button" :disabled="savingId === request.id || request.applicantId === currentUser?.id" @click="decide(request, 'APPROVE')">同意</button>
-          <button class="refresh-button" type="button" :disabled="savingId === request.id || request.applicantId === currentUser?.id" @click="decide(request, 'REJECT')">拒绝</button>
+          <template v-if="confirmingId === request.id">
+            <p class="confirm-warning">
+              批准后不可撤销。{{ request.competingPending > 0 ? `同时段其余 ${request.competingPending} 条申请将因时段被占用而无法再批准。` : '该时段将被本申请占用。' }}
+            </p>
+            <button class="primary-button" type="button" :disabled="savingId === request.id" @click="decide(request, 'APPROVE')">确认批准</button>
+            <button class="refresh-button" type="button" :disabled="savingId === request.id" @click="confirmingId = null">取消</button>
+          </template>
+          <template v-else>
+            <button class="primary-button" type="button" :disabled="savingId === request.id || request.applicantId === currentUser?.id" @click="askApprove(request)">同意</button>
+            <button class="refresh-button" type="button" :disabled="savingId === request.id || request.applicantId === currentUser?.id" @click="decide(request, 'REJECT')">拒绝</button>
+          </template>
         </div>
       </article>
     </div>
@@ -59,6 +68,7 @@ const size = 20
 const total = ref(0)
 const loading = ref(false)
 const savingId = ref(null)
+const confirmingId = ref(null)
 const error = ref('')
 const message = ref('')
 const formatTime = value => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
@@ -66,6 +76,7 @@ const formatTime = value => new Date(value).toLocaleString('zh-CN', { timeZone: 
 async function load() {
   loading.value = true
   error.value = ''
+  confirmingId.value = null
   try {
     const result = await getPendingReviews({ page: page.value, size })
     requests.value = result.content
@@ -73,8 +84,14 @@ async function load() {
   } catch (cause) { error.value = cause.message || '读取审核队列失败。' }
   finally { loading.value = false }
 }
+function askApprove(request) {
+  error.value = ''
+  message.value = ''
+  confirmingId.value = request.id
+}
 async function decide(request, decision) {
   if (savingId.value != null) return
+  confirmingId.value = null
   const reason = reasons.value[request.id] || ''
   if (decision === 'REJECT' && !reason.trim()) { error.value = '拒绝时请填写原因。'; return }
   savingId.value = request.id
@@ -96,4 +113,5 @@ onMounted(load)
 .approval-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));align-items:stretch}.approval-entry{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:16px}.approval-entry h3{font-size:16px;overflow-wrap:anywhere}.approval-entry p{font-size:13px;line-height:1.6;overflow-wrap:anywhere}.approval-entry .field{margin:12px 0 0}.approval-entry .approval-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}.approval-entry .approval-actions button{flex:0 1 auto}.applicant-line{display:flex;align-items:center;gap:8px;margin:8px 0;min-width:0}.applicant-line span{min-width:0;overflow-wrap:anywhere}.approval-time{color:#776d94}.approval-header-actions{display:flex;gap:8px;flex-wrap:wrap}
 .priority-badge{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:999px;background:#f3e7ff;color:#5f3a8a;font-size:12px;font-weight:600;vertical-align:middle}
 .competing-hint{margin-top:6px;padding:8px 10px;border-radius:9px;background:#fff6e6;color:#8a5a17;font-size:13px;line-height:1.6}
+.approval-entry .confirm-warning{flex:1 1 100%;margin:0 0 2px;padding:8px 10px;border-radius:9px;background:#fdeeec;color:#8d3b32;font-size:13px;line-height:1.6}
 </style>

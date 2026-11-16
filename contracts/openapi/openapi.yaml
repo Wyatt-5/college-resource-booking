@@ -1630,6 +1630,16 @@ paths:
       - name: itemId
         in: query
         schema: { type: integer, format: int64 }
+      - name: status
+        in: query
+        description: 按预约状态筛选；传非法值时返回 400
+        schema:
+          type: string
+          enum: [PENDING_APPROVAL, CONFIRMED, REJECTED, CANCELLED, EXPIRED]
+      - name: keyword
+        in: query
+        description: 按申请人姓名、登录名或资源名称模糊匹配，最长 50 个字符
+        schema: { type: string, maxLength: 50 }
       - name: page
         in: query
         schema: { type: integer, minimum: 0, default: 0 }

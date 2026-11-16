@@ -147,6 +147,57 @@ class ItemReservationDatabaseTest {
     }
 
     @Test
+    void counselorApplicantIsStillReviewableWhenQueueHasNoTier() throws Exception {
+        db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
+        db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
+        db.update("INSERT INTO role_grants(user_id,role) VALUES (?,'COUNSELOR_ADMIN')",firstId);
+        try {
+            long id=create(firstLogin,"counselor-queue-1");
+            // 整合后定稿：队列不按身份区分，priorityTier 一律为 STANDARD（改这里要同步 OpenAPI 与前端）
+            mvc.perform(get("/api/v1/review/reservations").with(user(loginDetails.loadUserByUsername(secondLogin))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content[0].id").value(id))
+                    .andExpect(jsonPath("$.content[0].priorityTier").value("STANDARD"));
+            // 无论是否辅导员，审核人都能批准
+            mvc.perform(patch("/api/v1/reservations/"+id+"/review").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
+                    .contentType("application/json").content("{\"decision\":\"APPROVE\"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CONFIRMED"));
+        } finally { db.update("DELETE FROM role_grants WHERE user_id=?",firstId); }
+    }
+
+    @Test
+    void bookingLogFiltersByStatusAndKeyword() throws Exception {
+        db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
+        db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
+        db.update("INSERT INTO role_grants(user_id,role) VALUES (?,'SYSTEM_ADMIN')",secondId);
+        try {
+            long approved=create(firstLogin,"log-filter-1");
+            long rejected=create(firstLogin,"log-filter-2");
+            mvc.perform(patch("/api/v1/reservations/"+approved+"/review").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
+                    .contentType("application/json").content("{\"decision\":\"APPROVE\"}")).andExpect(status().isOk());
+            mvc.perform(patch("/api/v1/reservations/"+rejected+"/review").with(user(loginDetails.loadUserByUsername(secondLogin))).with(csrf())
+                    .contentType("application/json").content("{\"decision\":\"REJECT\",\"reason\":\"时段冲突\"}")).andExpect(status().isOk());
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                    .param("itemId",Long.toString(itemId)).param("status","REJECTED"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                    .andExpect(jsonPath("$.content[0].id").value(rejected));
+            // 关键字同时匹配申请人姓名与资源名称
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                    .param("itemId",Long.toString(itemId)).param("keyword","测试甲"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2));
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                    .param("itemId",Long.toString(itemId)).param("keyword","预约测试物品"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2));
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                    .param("itemId",Long.toString(itemId)).param("keyword","不存在的关键字"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                    .param("itemId",Long.toString(itemId)).param("status","NOT_A_STATUS"))
+                    .andExpect(status().isBadRequest());
+        } finally { db.update("DELETE FROM role_grants WHERE user_id=?",secondId); }
+    }
+
+    @Test
     void concurrentApprovalKeepsExactlyOneDecision() throws Exception {
         db.update("UPDATE items SET is_valuable=true WHERE id=?",itemId);
         db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",secondId);
