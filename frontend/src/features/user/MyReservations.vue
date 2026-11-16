@@ -12,7 +12,7 @@
     <div v-else class="reservation-list my-reservation-grid">
       <article v-for="reservation in reservations" :key="reservation.id" class="item-card reservation-entry">
         <div class="reservation-entry-main">
-          <div class="reservation-entry-head"><h3>{{ reservation.resourceType === 'SPACE' ? '地点 · ' : '物品 · ' }}{{ reservation.itemName }}</h3><span :class="['status-badge', badgeClass(reservation.status)]">{{ displayStatus(reservation) }}</span></div>
+          <div class="reservation-entry-head"><h3>{{ reservation.resourceType === 'SPACE' ? '地点 · ' : '物品 · ' }}{{ reservation.itemName }}</h3><span :class="['status-badge', reservationBadgeClass(reservation)]">{{ displayStatus(reservation) }}</span></div>
           <p class="reservation-time">{{ formatTime(reservation.startAt) }} 至 {{ formatTime(reservation.endAt) }}</p>
           <p>{{ reservation.resourceType === 'ITEM' ? `数量 ${reservation.quantity} · ` : '' }}{{ reservation.purpose }}</p>
           <p v-if="isOverdue(reservation)" class="rejection-reason">借用已到期，请尽快提交归还材料。</p>
@@ -29,6 +29,9 @@
       </article>
     </div>
     <BookingModal v-if="selected" :title="`预约详情 · ${selected.itemName}`" @close="selected=null">
+      <ol v-if="selected.resourceType === 'ITEM' && selected.status === 'CONFIRMED' && selected.handoverStatus" class="handover-progress" aria-label="借还进度">
+        <li v-for="(label, index) in HANDOVER_STEPS" :key="label" :class="handoverStepState(selected.handoverStatus, index)"><span>{{ handoverStepState(selected.handoverStatus, index) === 'done' ? '✓' : index + 1 }}</span>{{ label }}</li>
+      </ol>
       <dl class="reservation-detail">
         <dt>资源</dt><dd>{{ selected.itemName }}（{{ selected.resourceType==='SPACE'?'地点':'物品' }}）</dd>
         <dt>预约状态</dt><dd>{{ statusName(selected.status) }}</dd>
@@ -38,6 +41,7 @@
         <dt>申请数量</dt><dd>{{ selected.quantity }}</dd><dt>用途</dt><dd>{{ selected.purpose }}</dd>
         <template v-if="selected.lastReturnReason"><dt>核验意见</dt><dd>{{ selected.lastReturnReason }}</dd></template>
       </dl>
+      <p v-if="selected.resourceType === 'ITEM' && selected.status === 'CONFIRMED'" class="handover-guidance">{{ handoverGuidance(selected.handoverStatus) }}</p>
     </BookingModal>
     <PickupConfirmationModal v-if="pickupTarget" :reservation="pickupTarget" @close="pickupTarget=null" @submitted="afterPickup" />
     <ReturnSubmissionModal v-if="returnTarget" :reservation="returnTarget" @close="returnTarget=null" @submitted="afterReturn" />
@@ -52,6 +56,7 @@
 import { onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getMyReservations, cancelMyReservation, getReturnReminders } from '../../lib/api'
 import ReturnReminders from './ReturnReminders.vue'
+import { HANDOVER_STEPS, handoverGuidance, handoverStepState, reservationBadgeClass } from '../../lib/handoverState'
 import BookingModal from '../../components/BookingModal.vue'
 import PickupConfirmationModal from '../../components/PickupConfirmationModal.vue'
 import ReturnSubmissionModal from '../../components/ReturnSubmissionModal.vue'
@@ -82,7 +87,6 @@ const pickupHint = reservation => {
 const canReturn = reservation => reservation.resourceType === 'ITEM' && ['CHECKED_OUT', 'RETURN_REJECTED'].includes(reservation.handoverStatus)
 const isOverdue = reservation => canReturn(reservation) && reservation.status === 'CONFIRMED' && new Date(reservation.endAt).getTime() <= now.value
 const canCancel = reservation => ['CONFIRMED', 'PENDING_APPROVAL'].includes(reservation.status) && (!reservation.handoverStatus || reservation.handoverStatus === 'NOT_PICKED_UP') && new Date(reservation.startAt) > new Date()
-const badgeClass = status => ({ CONFIRMED: 'badge-ok', PENDING_APPROVAL: 'badge-pending', REJECTED: 'badge-reject', CANCELLED: 'badge-off', EXPIRED: 'badge-off' })[status] || 'badge-normal'
 
 async function load() {
   if (!props.currentUser) return
@@ -128,6 +132,11 @@ onUnmounted(() => { window.clearInterval(clockTimer); loadVersion++ })
 .reservation-actions button{flex:0 1 auto;min-width:0;padding:8px 12px}
 .cancel-button{border-color:#dda694;color:#a03d2a}
 .cancel-button:hover:not(:disabled){background:#fdf3ee}
+.handover-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));list-style:none;gap:8px;margin:0 0 20px;padding:0}
+.handover-progress li{display:grid;justify-items:center;gap:8px;font-size:12px;text-align:center;color:#8b809b}
+.handover-progress li span{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#eeeaf5}
+.handover-progress .done span{background:#6a509d;color:#fff}.handover-progress .current span{border:2px solid #6a509d;color:#51377f}
+.handover-progress .rejected span{border:2px solid #bd5942;color:#9b3d29}.handover-guidance{font-size:13px;color:#665b7e;line-height:1.6;margin-bottom:0}
 .reservation-detail{display:grid;grid-template-columns:110px 1fr;gap:12px 14px;margin:0}
 .reservation-detail dt{color:#81718f;font-size:13px}
 .reservation-detail dd{margin:0;font-size:14px;overflow-wrap:anywhere}

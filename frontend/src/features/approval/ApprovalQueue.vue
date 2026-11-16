@@ -8,6 +8,14 @@
       </div>
     </div>
     <BookingModal v-if="showLog" title="预约日志" @close="showLog = false"><BookingLog in-modal /></BookingModal>
+    <BookingModal v-if="approvalTarget" title="确认批准预约" compact :busy="savingId !== null" @close="approvalTarget = null">
+      <p class="approval-confirm-name">{{ approvalTarget.itemName }}</p>
+      <p>{{ formatTime(approvalTarget.startAt) }} 至 {{ formatTime(approvalTarget.endAt) }}</p>
+      <p>确认后将记录审批结果并占用相应时段容量，提交时系统会再次检查是否可用。</p>
+      <p v-if="approvalTarget.competingPending > 0">同时段还有 {{ approvalTarget.competingPending }} 条待审申请，批准本单可能影响其他申请的可用容量。</p>
+      <p v-if="error" class="error-card" role="alert">{{ error }}</p>
+      <div class="approval-confirm-actions"><button class="refresh-button" :disabled="savingId !== null" @click="approvalTarget = null">返回检查</button><button class="primary-button" :disabled="savingId !== null" @click="decide(approvalTarget, 'APPROVE')">{{ savingId !== null ? '处理中…' : '确认批准' }}</button></div>
+    </BookingModal>
     <p class="section-sub">审核贵重物品与地点预约申请，处理结果会记录到预约日志。</p>
     <p v-if="error" class="state-card error-card" role="alert">{{ error }}</p>
     <p v-else-if="loading" class="state-card" role="status">正在读取待审申请…</p>
@@ -28,17 +36,8 @@
           <label class="field"><span>拒绝原因</span><input v-model.trim="reasons[request.id]" type="text" maxlength="300" placeholder="拒绝时必填"></label>
         </div>
         <div class="approval-actions">
-          <template v-if="confirmingId === request.id">
-            <p class="confirm-warning">
-              批准后不可撤销。{{ request.competingPending > 0 ? `同时段其余 ${request.competingPending} 条申请将因时段被占用而无法再批准。` : '该时段将被本申请占用。' }}
-            </p>
-            <button class="primary-button" type="button" :disabled="savingId === request.id" @click="decide(request, 'APPROVE')">确认批准</button>
-            <button class="refresh-button" type="button" :disabled="savingId === request.id" @click="confirmingId = null">取消</button>
-          </template>
-          <template v-else>
-            <button class="primary-button" type="button" :disabled="savingId === request.id || request.applicantId === currentUser?.id" @click="askApprove(request)">同意</button>
-            <button class="refresh-button" type="button" :disabled="savingId === request.id || request.applicantId === currentUser?.id" @click="decide(request, 'REJECT')">拒绝</button>
-          </template>
+          <button class="primary-button" type="button" :disabled="savingId !== null || request.applicantId === currentUser?.id" @click="askApprove(request)">同意</button>
+          <button class="refresh-button" type="button" :disabled="savingId !== null || request.applicantId === currentUser?.id" @click="decide(request, 'REJECT')">拒绝</button>
         </div>
       </article>
     </div>
@@ -68,7 +67,7 @@ const size = 20
 const total = ref(0)
 const loading = ref(false)
 const savingId = ref(null)
-const confirmingId = ref(null)
+const approvalTarget = ref(null)
 const error = ref('')
 const message = ref('')
 const formatTime = value => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
@@ -76,7 +75,7 @@ const formatTime = value => new Date(value).toLocaleString('zh-CN', { timeZone: 
 async function load() {
   loading.value = true
   error.value = ''
-  confirmingId.value = null
+  if (savingId.value === null) approvalTarget.value = null
   try {
     const result = await getPendingReviews({ page: page.value, size })
     requests.value = result.content
@@ -85,13 +84,13 @@ async function load() {
   finally { loading.value = false }
 }
 function askApprove(request) {
+  if (savingId.value !== null || request.applicantId === props.currentUser?.id) return
   error.value = ''
   message.value = ''
-  confirmingId.value = request.id
+  approvalTarget.value = request
 }
 async function decide(request, decision) {
   if (savingId.value != null) return
-  confirmingId.value = null
   const reason = reasons.value[request.id] || ''
   if (decision === 'REJECT' && !reason.trim()) { error.value = '拒绝时请填写原因。'; return }
   savingId.value = request.id
@@ -99,6 +98,7 @@ async function decide(request, decision) {
   message.value = ''
   try {
     const saved = await reviewReservation(request.id, { decision, reason })
+    approvalTarget.value = null
     message.value = `申请已${saved.status === 'CONFIRMED' ? '批准' : '拒绝'}。`
     await load()
   } catch (cause) { error.value = cause.message || '审核失败，请稍后重试。' }
@@ -114,4 +114,5 @@ onMounted(load)
 .priority-badge{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:999px;background:#f3e7ff;color:#5f3a8a;font-size:12px;font-weight:600;vertical-align:middle}
 .competing-hint{margin-top:6px;padding:8px 10px;border-radius:9px;background:#fff6e6;color:#8a5a17;font-size:13px;line-height:1.6}
 .approval-entry .confirm-warning{flex:1 1 100%;margin:0 0 2px;padding:8px 10px;border-radius:9px;background:#fdeeec;color:#8d3b32;font-size:13px;line-height:1.6}
+.approval-confirm-name{font-weight:700}.approval-confirm-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;flex-wrap:wrap}
 </style>

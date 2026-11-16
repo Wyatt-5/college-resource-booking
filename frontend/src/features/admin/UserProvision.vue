@@ -16,7 +16,7 @@
     <form class="account-provision-form" @submit.prevent="submit">
 
       <label class="field"><span>登录账号</span>
-        <input v-model.trim="loginName" type="text" minlength="3" maxlength="40" pattern="[A-Za-z0-9._-]+" required>
+        <input v-model.trim="loginName" type="text" minlength="3" maxlength="40" pattern="[A-Za-z0-9._\-]+" required>
       </label>
       <label class="field"><span>姓名或显示名称</span>
         <input v-model.trim="displayName" type="text" maxlength="100" required>

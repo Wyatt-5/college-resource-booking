@@ -1638,7 +1638,7 @@ paths:
           enum: [PENDING_APPROVAL, CONFIRMED, REJECTED, CANCELLED, EXPIRED]
       - name: keyword
         in: query
-        description: 按申请人姓名、登录名或资源名称模糊匹配，最长 50 个字符
+        description: 按申请人姓名、登录名或资源名称不区分大小写地匹配，最长50字符；百分号、下划线与反斜线按字面处理
         schema: { type: string, maxLength: 50 }
       - name: page
         in: query

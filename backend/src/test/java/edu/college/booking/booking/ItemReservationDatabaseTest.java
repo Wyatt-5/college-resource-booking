@@ -194,6 +194,23 @@ class ItemReservationDatabaseTest {
             mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
                     .param("itemId",Long.toString(itemId)).param("status","NOT_A_STATUS"))
                     .andExpect(status().isBadRequest());
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                    .param("itemId",Long.toString(itemId)).param("keyword",firstLogin).param("page","1").param("size","1"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2))
+                    .andExpect(jsonPath("$.content.length()").value(1));
+            mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                    .param("keyword","a".repeat(51))).andExpect(status().isBadRequest());
+            for (String literal : List.of("%", "_", "\\")) {
+                mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                        .param("itemId",Long.toString(itemId)).param("keyword",literal))
+                        .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
+            }
+            db.update("UPDATE items SET name=? WHERE id=?", "相机_50%\\", itemId);
+            for (String literal : List.of("%", "_", "\\")) {
+                mvc.perform(get("/api/v1/management/reservations").with(user(loginDetails.loadUserByUsername(secondLogin)))
+                        .param("itemId",Long.toString(itemId)).param("keyword",literal))
+                        .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2));
+            }
         } finally { db.update("DELETE FROM role_grants WHERE user_id=?",secondId); }
     }
 

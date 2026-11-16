@@ -151,7 +151,7 @@ public class ItemReservationService {
         if(state!=null&&!LOG_STATUSES.contains(state))throw invalid("日志状态筛选值无效");
         String kw=keyword==null||keyword.isBlank()?null:keyword.trim();
         if(kw!=null&&kw.length()>50)throw invalid("关键字不能超过 50 个字符");
-        String pattern=kw==null?null:"%"+kw+"%";
+        String pattern=kw==null?null:"%"+kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")+"%";
         return new LogPage(reservations.log(itemId,state,pattern,size,(long)page*size),
                 page,size,reservations.countLog(itemId,state,pattern));
     }
