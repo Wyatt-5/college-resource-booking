@@ -2,6 +2,8 @@
 
 技术栈：Java 21、Spring Boot 4.1.2、PostgreSQL、Flyway、Maven Wrapper。无需在电脑上单独安装 Maven。
 
+2026-11-17新增[云端部署配置](../deploy/README.md)，后端以非 root 容器运行，数据库和图片使用独立持久化卷。当前是经本机 SSH 隧道访问的受限测试环境，公开域名与 HTTPS 尚未部署；实际验证见[部署记录](../docs/2026-11-17%20云端部署与两机联调记录.md)。
+
 ## 本地启动（Windows PowerShell）
 
 在仓库根目录执行：
