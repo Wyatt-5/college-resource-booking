@@ -54,6 +54,47 @@ class CatalogDatabaseTest {
                 .contentType("application/json").content(body(place,name))).andExpect(status().isCreated())
                 .andExpect(header().exists("Location")).andReturn().getResponse().getContentAsString()).get("id").asLong();
     }
+    @Test void advancedFiltersApplyBeforePaginationAndStockSortingIsStable() throws Exception {
+        long valuable = create(location, "Gamma");
+        long alpha = create(location, "Alpha");
+        long beta = create(location, "Beta");
+        create(other, "Alpha");
+        db.update("UPDATE items SET is_valuable=false WHERE id IN (?, ?)", alpha, beta);
+        db.update("INSERT INTO item_units(item_id,unit_code) VALUES (?,?), (?,?), (?,?)",
+                valuable, "advanced-v1-" + valuable, valuable, "advanced-v2-" + valuable,
+                alpha, "advanced-a-" + alpha);
+
+        mvc.perform(get("/api/v1/items").param("locationId", Long.toString(location))
+                .param("isValuable", "false").param("sort", "NAME_ASC").param("page", "0").param("size", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.content[0].id").value(alpha));
+        mvc.perform(get("/api/v1/items").param("locationId", Long.toString(location))
+                .param("isValuable", "false").param("sort", "NAME_ASC").param("page", "1").param("size", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.content[0].id").value(beta));
+        mvc.perform(get("/api/v1/items").param("locationId", Long.toString(location))
+                .param("isValuable", "false").param("onlyAvailable", "true").param("page", "0"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(alpha));
+        mvc.perform(get("/api/v1/items").param("locationId", Long.toString(location))
+                .param("sort", "AVAILABLE_DESC").param("page", "0"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].id").value(valuable))
+                .andExpect(jsonPath("$.content[1].id").value(alpha));
+        mvc.perform(get("/api/v1/items").param("locationId", Long.toString(location))
+                .param("sort", "CREATED_DESC").param("page", "0"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].id").value(beta));
+        db.update("UPDATE items SET status='INACTIVE' WHERE id=?", beta);
+        mvc.perform(get("/api/v1/items").param("locationId", Long.toString(location))
+                .param("isValuable", "false").param("keyword", "beta").param("page", "0"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    @Test void searchRejectsInvalidSortAndTypeInsteadOfChangingSql() throws Exception {
+        mvc.perform(get("/api/v1/items").param("sort", "name; DROP TABLE items"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/items").param("isValuable", "anything"))
+                .andExpect(status().isBadRequest());
+    }
     @Test void archivePreservesHistoryAndBlocksUnfinishedBookings() throws Exception {
         long item = create(location, "需要移除的物品");
         long applicant = db.queryForObject("INSERT INTO users(login_name,display_name,password_hash) VALUES (?, '测试用户', 'hash') RETURNING id", Long.class, "archive-" + UUID.randomUUID());

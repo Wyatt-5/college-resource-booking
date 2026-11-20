@@ -1,0 +1,85 @@
+name: college-booking
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: college_booking
+      POSTGRES_USER: booking
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      TZ: Asia/Shanghai
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=30"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    mem_limit: 256m
+    shm_size: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking -d college_booking"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging: *logging
+  backend:
+    image: college-booking-backend:${RELEASE_ID:?Set RELEASE_ID}
+    restart: unless-stopped
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/college_booking
+      DB_USERNAME: booking
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      TASK_SERVICE_TOKEN: ${TASK_SERVICE_TOKEN:?Set TASK_SERVICE_TOKEN}
+      BOOTSTRAP_ADMIN_LOGIN: ${BOOTSTRAP_ADMIN_LOGIN:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      CATALOG_IMAGE_DIRECTORY: /app/data/catalog-images
+      RETURN_IMAGE_DIRECTORY: /app/data/return-images
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "8"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "2"
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:MaxMetaspaceSize=192m -XX:ReservedCodeCacheSize=64m -XX:+ExitOnOutOfMemoryError
+      TZ: Asia/Shanghai
+    volumes:
+      - uploads:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    logging: *logging
+  web:
+    image: college-booking-web:${RELEASE_ID:?Set RELEASE_ID}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEB_PORT:-18080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *logging
+volumes:
+  postgres-data:
+  uploads:

@@ -340,8 +340,13 @@ export async function cancelMyReservation(id) {
     headers: { Accept:'application/json', ...authHeaders(), ...csrf }, credentials:'same-origin' })
     .then(response => parseResponse(response,'取消预约失败'))
 }
-export const getBookingLogs = ({ itemId, page = 0, size = 20 } = {}) =>
-  getJson(`/management/reservations?page=${page}&size=${size}${itemId ? `&itemId=${itemId}` : ''}`)
+export const getBookingLogs = ({ itemId, status, keyword, page = 0, size = 20 } = {}) => {
+  const query = new URLSearchParams({ page: String(page), size: String(size) })
+  if (itemId) query.set('itemId', String(itemId))
+  if (status) query.set('status', status)
+  if (keyword) query.set('keyword', keyword)
+  return getJson(`/management/reservations?${query}`)
+}
 export async function archiveItem(id) {
   if (USE_MOCK_ITEMS) {
     await mockDelay()
@@ -633,9 +638,12 @@ export async function getAdminList() {
 
 // 公告与反馈：同源会话，所有写操作携带 CSRF。
 export const getAnnouncements = ({ managed = false, page = 0, size = 20 } = {}) => getJson(`/announcements?managed=${managed}&page=${page}&size=${size}`)
+export const getUnreadAnnouncements = ({ page = 0, size = 10 } = {}) => getJson(`/announcements/unread?page=${page}&size=${size}`)
+export const markAnnouncementsRead = announcements => postJson('/announcements/read', { announcements })
 export const createAnnouncement = payload => postJson('/announcements', payload)
 export const updateAnnouncement = (id, payload) => putJson(`/announcements/${id}`, payload)
 export const getFeedback = ({ managed = false, page = 0, size = 20 } = {}) => getJson(`/feedback?managed=${managed}&page=${page}&size=${size}`)
+export const getReturnReminders = ({ managed = false, page = 0, size = 20 } = {}) => getJson(`/return-reminders?managed=${managed}&page=${page}&size=${size}`)
 export const createFeedback = content => postJson('/feedback', { content })
 export const handleFeedback = (id, payload) => putJson(`/feedback/${id}`, payload)
 

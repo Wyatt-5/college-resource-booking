@@ -2,7 +2,7 @@
   <section class="content-section">
     <div class="section-heading">
       <div><h1>我的预约</h1></div>
-      <button v-if="currentUser" class="refresh-button" :disabled="loading" @click="load">{{ loading ? '读取中…' : '刷新' }}</button>
+      <button v-if="currentUser" class="refresh-button" @click="showReminders = true">归还提醒{{ reminderCount ? `（${reminderCount}）` : '' }}</button>
     </div>
     <p v-if="banner" class="success-banner" role="status">{{ banner }}</p>
     <div v-if="!currentUser" class="state-card"><p>登录后查看自己的预约。</p><button class="primary-button" @click="emit('login-requested')">去登录</button></div>
@@ -12,9 +12,11 @@
     <div v-else class="reservation-list my-reservation-grid">
       <article v-for="reservation in reservations" :key="reservation.id" class="item-card reservation-entry">
         <div class="reservation-entry-main">
-          <div class="reservation-entry-head"><h3>{{ reservation.resourceType === 'SPACE' ? '地点 · ' : '物品 · ' }}{{ reservation.itemName }}</h3><span :class="['status-badge', badgeClass(reservation.status)]">{{ displayStatus(reservation) }}</span></div>
+          <div class="reservation-entry-head"><h3>{{ reservation.resourceType === 'SPACE' ? '地点 · ' : '物品 · ' }}{{ reservation.itemName }}</h3><span :class="['status-badge', reservationBadgeClass(reservation)]">{{ displayStatus(reservation) }}</span></div>
           <p class="reservation-time">{{ formatTime(reservation.startAt) }} 至 {{ formatTime(reservation.endAt) }}</p>
           <p>{{ reservation.resourceType === 'ITEM' ? `数量 ${reservation.quantity} · ` : '' }}{{ reservation.purpose }}</p>
+          <p v-if="isOverdue(reservation)" class="rejection-reason">借用已到期，请尽快提交归还材料。</p>
+          <p v-if="reservation.status === 'EXPIRED'">预约开始前未完成审核，系统已自动过期。</p>
           <p v-if="pickupHint(reservation)" class="pickup-hint">{{ pickupHint(reservation) }}</p>
           <p v-if="reservation.handoverStatus === 'RETURN_REJECTED'" class="rejection-reason">核验驳回：{{ reservation.lastReturnReason || '请补充照片后重新提交' }}</p>
         </div>
@@ -27,6 +29,9 @@
       </article>
     </div>
     <BookingModal v-if="selected" :title="`预约详情 · ${selected.itemName}`" @close="selected=null">
+      <ol v-if="selected.resourceType === 'ITEM' && selected.status === 'CONFIRMED' && selected.handoverStatus" class="handover-progress" aria-label="借还进度">
+        <li v-for="(label, index) in HANDOVER_STEPS" :key="label" :class="handoverStepState(selected.handoverStatus, index)"><span>{{ handoverStepState(selected.handoverStatus, index) === 'done' ? '✓' : index + 1 }}</span>{{ label }}</li>
+      </ol>
       <dl class="reservation-detail">
         <dt>资源</dt><dd>{{ selected.itemName }}（{{ selected.resourceType==='SPACE'?'地点':'物品' }}）</dd>
         <dt>预约状态</dt><dd>{{ statusName(selected.status) }}</dd>
@@ -36,9 +41,11 @@
         <dt>申请数量</dt><dd>{{ selected.quantity }}</dd><dt>用途</dt><dd>{{ selected.purpose }}</dd>
         <template v-if="selected.lastReturnReason"><dt>核验意见</dt><dd>{{ selected.lastReturnReason }}</dd></template>
       </dl>
+      <p v-if="selected.resourceType === 'ITEM' && selected.status === 'CONFIRMED'" class="handover-guidance">{{ handoverGuidance(selected.handoverStatus) }}</p>
     </BookingModal>
     <PickupConfirmationModal v-if="pickupTarget" :reservation="pickupTarget" @close="pickupTarget=null" @submitted="afterPickup" />
     <ReturnSubmissionModal v-if="returnTarget" :reservation="returnTarget" @close="returnTarget=null" @submitted="afterReturn" />
+    <BookingModal v-if="showReminders" title="归还提醒" @close="showReminders = false"><ReturnReminders :current-user="currentUser" in-modal /></BookingModal>
     <nav v-if="currentUser && total > size" class="pagination-bar" aria-label="预约分页">
       <button class="refresh-button" :disabled="page === 0 || loading" @click="changePage(page - 1)">上一页</button><span>共 {{ total }} 条 · 第 {{ page + 1 }} 页</span><button class="refresh-button" :disabled="(page + 1) * size >= total || loading" @click="changePage(page + 1)">下一页</button>
     </nav>
@@ -46,8 +53,10 @@
 </template>
 
 <script setup>
-import { onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
-import { getMyReservations, cancelMyReservation } from '../../lib/api'
+import { onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { getMyReservations, cancelMyReservation, getReturnReminders } from '../../lib/api'
+import ReturnReminders from './ReturnReminders.vue'
+import { HANDOVER_STEPS, handoverGuidance, handoverStepState, reservationBadgeClass } from '../../lib/handoverState'
 import BookingModal from '../../components/BookingModal.vue'
 import PickupConfirmationModal from '../../components/PickupConfirmationModal.vue'
 import ReturnSubmissionModal from '../../components/ReturnSubmissionModal.vue'
@@ -57,6 +66,8 @@ const emit = defineEmits(['login-requested'])
 const reservations = ref([]), total = ref(0), page = ref(0), loading = ref(false)
 const errorMessage = ref(''), banner = ref(''), selected = ref(null), pickupTarget = ref(null), returnTarget = ref(null), cancelling = ref(null)
 const size = 20
+const showReminders = ref(false), reminderCount = ref(0)
+let loadVersion = 0
 const now = ref(Date.now())
 let clockTimer
 const labels = { CONFIRMED: '已确认', PENDING_APPROVAL: '待审核', REJECTED: '已拒绝', CANCELLED: '已取消', EXPIRED: '已过期' }
@@ -74,15 +85,18 @@ const pickupHint = reservation => {
   return ''
 }
 const canReturn = reservation => reservation.resourceType === 'ITEM' && ['CHECKED_OUT', 'RETURN_REJECTED'].includes(reservation.handoverStatus)
+const isOverdue = reservation => canReturn(reservation) && reservation.status === 'CONFIRMED' && new Date(reservation.endAt).getTime() <= now.value
 const canCancel = reservation => ['CONFIRMED', 'PENDING_APPROVAL'].includes(reservation.status) && (!reservation.handoverStatus || reservation.handoverStatus === 'NOT_PICKED_UP') && new Date(reservation.startAt) > new Date()
-const badgeClass = status => ({ CONFIRMED: 'badge-ok', PENDING_APPROVAL: 'badge-pending', REJECTED: 'badge-reject', CANCELLED: 'badge-off', EXPIRED: 'badge-off' })[status] || 'badge-normal'
 
 async function load() {
   if (!props.currentUser) return
+  const version = ++loadVersion
+  const userId = props.currentUser.id
   loading.value = true; errorMessage.value = ''
-  try { const result = await getMyReservations({ page: page.value, size }); reservations.value = result.content; total.value = result.totalElements }
-  catch (error) { errorMessage.value = error.message || '读取预约失败。' }
-  finally { loading.value = false }
+  getReturnReminders({ size: 1 }).then(result => { if (version === loadVersion && props.currentUser?.id === userId) reminderCount.value = result.totalElements }).catch(() => {})
+  try { const result = await getMyReservations({ page: page.value, size }); if (version !== loadVersion || props.currentUser?.id !== userId) return; reservations.value = result.content; total.value = result.totalElements }
+  catch (error) { if (version === loadVersion) errorMessage.value = error.message || '读取预约失败。' }
+  finally { if (version === loadVersion) loading.value = false }
 }
 function changePage(next) { page.value = next; load() }
 async function cancel(reservation) {
@@ -94,28 +108,35 @@ async function cancel(reservation) {
 }
 async function afterPickup(result) { pickupTarget.value = null; banner.value = `领取确认成功，已绑定实物 ${result.unitCodes.join('、')}。`; await load() }
 async function afterReturn() { returnTarget.value = null; banner.value = '归还材料已提交，请等待管理员核验。'; await load() }
-watch(() => props.currentUser?.id, () => { reservations.value = []; page.value = 0; load() })
+watch(() => props.currentUser?.id, () => { loadVersion++; reservations.value = []; reminderCount.value = 0; showReminders.value = false; selected.value = null; pickupTarget.value = null; returnTarget.value = null; page.value = 0; load() })
 let activatedOnce = false
-onActivated(() => { if (activatedOnce) load(); activatedOnce = true })
-onMounted(() => { load(); clockTimer = window.setInterval(() => { now.value = Date.now() }, 30000) })
-onUnmounted(() => window.clearInterval(clockTimer))
+function startClock() { window.clearInterval(clockTimer); clockTimer = window.setInterval(() => { now.value = Date.now(); if (!pickupTarget.value && !returnTarget.value) load() }, 30000) }
+onActivated(() => { if (activatedOnce) load(); activatedOnce = true; startClock() })
+onMounted(() => { load(); startClock() })
+onDeactivated(() => { window.clearInterval(clockTimer); loadVersion++ })
+onUnmounted(() => { window.clearInterval(clockTimer); loadVersion++ })
 </script>
 <style scoped>
 .my-reservation-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));align-items:stretch}
 .pickup-hint{color:#665b7e;line-height:1.6}
 .rejection-reason{color:#a53e31;font-weight:700}
 /* 我的预约：标题与状态同一行，时间与用途分层，操作按钮独立成块，手机上整行可点 */
-.reservation-entry{display:flex;flex-direction:column;align-items:stretch;gap:14px;padding:18px}
-.reservation-entry-main{display:flex;flex-direction:column;gap:6px;min-width:0}
+.reservation-entry{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:16px}
+.reservation-entry-main{display:flex;flex-direction:column;gap:8px;min-width:0}
 .reservation-entry-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .reservation-entry-head h3{margin:0;font-size:16px;line-height:1.45;overflow-wrap:anywhere}
 .reservation-entry-head .status-badge{flex:0 0 auto;margin-top:2px}
 .reservation-entry p{margin:0;color:#5d5478;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
 .reservation-entry .reservation-time{color:#776d94;font-size:12px}
-.reservation-actions{margin-top:auto;display:flex;gap:10px;flex-wrap:wrap}
-.reservation-actions button{flex:0 1 auto;min-width:0;padding:9px 13px}
+.reservation-actions{margin-top:auto;display:flex;gap:8px;flex-wrap:wrap}
+.reservation-actions button{flex:0 1 auto;min-width:0;padding:8px 12px}
 .cancel-button{border-color:#dda694;color:#a03d2a}
 .cancel-button:hover:not(:disabled){background:#fdf3ee}
+.handover-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));list-style:none;gap:8px;margin:0 0 20px;padding:0}
+.handover-progress li{display:grid;justify-items:center;gap:8px;font-size:12px;text-align:center;color:#8b809b}
+.handover-progress li span{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#eeeaf5}
+.handover-progress .done span{background:#6a509d;color:#fff}.handover-progress .current span{border:2px solid #6a509d;color:#51377f}
+.handover-progress .rejected span{border:2px solid #bd5942;color:#9b3d29}.handover-guidance{font-size:13px;color:#665b7e;line-height:1.6;margin-bottom:0}
 .reservation-detail{display:grid;grid-template-columns:110px 1fr;gap:12px 14px;margin:0}
 .reservation-detail dt{color:#81718f;font-size:13px}
 .reservation-detail dd{margin:0;font-size:14px;overflow-wrap:anywhere}

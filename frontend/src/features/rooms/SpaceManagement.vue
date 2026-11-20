@@ -1,4 +1,5 @@
 <script setup>
+import { useReloadOnReturn } from '../../lib/useReloadOnReturn'
 import { onMounted, ref } from 'vue'
 import { createSpace, getSpaces, uploadSpaceImage, updateSpace, removeSpace } from '../../lib/api'
 import BookingModal from '../../components/BookingModal.vue'
@@ -58,11 +59,12 @@ async function submit() {
   finally { saving.value = false }
 }
 onMounted(load)
+useReloadOnReturn(load)
 </script>
 
 <template>
   <section class="content-section space-management">
-    <div class="section-heading"><div><h1>地点管理</h1></div><div v-if="activeTab === 'spaces'" class="space-actions"><button class="refresh-button" type="button" @click="load">刷新</button><button class="primary-button" type="button" @click="formError=''; creating=true">新增地点</button></div></div>
+    <div class="section-heading"><div><h1>地点管理</h1></div><div v-if="activeTab === 'spaces'" class="space-actions"><button class="primary-button" type="button" @click="formError=''; creating=true">新增地点</button></div></div>
     <div class="location-tabs" aria-label="地点类型">
       <button type="button" :class="{ active: activeTab === 'spaces' }" @click="activeTab='spaces'">预约地点</button>
       <button type="button" :class="{ active: activeTab === 'storage' }" @click="activeTab='storage'">办公室与物资室</button>

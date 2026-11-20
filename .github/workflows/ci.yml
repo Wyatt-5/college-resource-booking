@@ -65,6 +65,17 @@ jobs:
           curl -fsS 'http://localhost:8080/api/v1/items?onlyAvailable=true&page=0&size=12' |
             python3 -c 'import json,sys; page=json.load(sys.stdin); assert isinstance(page["content"], list); assert page["page"]==0; assert page["size"]==12; assert page["totalElements"]==0'
 
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+      - name: Worker task tests
+        working-directory: worker
+        run: npm test
+
   frontend:
     runs-on: ubuntu-latest
     steps:

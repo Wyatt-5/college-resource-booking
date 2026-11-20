@@ -106,7 +106,7 @@ onUnmounted(()=>{for(const image of images.value)URL.revokeObjectURL(image.previ
         <label for="initial-stock">初始库存数量 <em>*</em></label>
         <input id="initial-stock" v-model.number="form.initialStock" type="number" min="0" max="500" step="1">
         <p v-if="fieldErrors.initialStock" class="field-error">{{ fieldErrors.initialStock }}</p>
-        <p class="card-hint">系统会自动给每件实物生成唯一编号。</p>
+
       </div>
 
       <div class="field-row">
@@ -115,8 +115,8 @@ onUnmounted(()=>{for(const image of images.value)URL.revokeObjectURL(image.previ
           <span class="toggle-track" aria-hidden="true"></span>
           <span>
             <strong>贵重物品</strong>
-            <small v-if="form.isValuable" class="toggle-hint">用户预约需审核员审批后才生效</small>
-            <small v-else class="toggle-hint">普通物品确认后自动占用名额</small>
+
+
           </span>
         </label>
 
@@ -125,7 +125,7 @@ onUnmounted(()=>{for(const image of images.value)URL.revokeObjectURL(image.previ
           <span class="toggle-track" aria-hidden="true"></span>
           <span>
             <strong>启用状态</strong>
-            <small class="toggle-hint">停用后用户端不可预约</small>
+
           </span>
         </label>
       </div>
@@ -151,14 +151,14 @@ onUnmounted(()=>{for(const image of images.value)URL.revokeObjectURL(image.previ
       <button type="submit" class="primary-button" :disabled="submitting">
         下一步：选择照片
       </button>
-      <p class="form-tip">下一步可选择照片，最后点击完成上架才会创建物品。</p>
+
     </form>
 
     <template v-else>
       <!-- 已创建物品摘要 -->
       <div class="created-summary">
         <div>
-          <p class="eyebrow">待确认</p>
+
           <h3>{{ form.name }}</h3>
           <p>
             {{ locationName(form.locationId) }} ·
@@ -172,7 +172,7 @@ onUnmounted(()=>{for(const image of images.value)URL.revokeObjectURL(image.previ
       <div class="form-card">
         <div class="card-heading">
           <h3>展示照片</h3>
-          <span class="card-hint">JPG / PNG / WebP，单张不超过 5MB，最多 {{ MAX_PHOTOS }} 张</span>
+
         </div>
         <div class="photo-grid">
           <figure v-for="image in images" :key="image.localId" class="photo-item">

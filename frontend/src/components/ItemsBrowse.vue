@@ -3,24 +3,37 @@
     <div class="section-heading">
       <div>
 
-        <h1>{{ initialLocation ? `${initialLocation.name} · 物品` : '可借物品' }}</h1>
-        <p class="section-sub">选择物品并提交时段预约。当前库存仅供参考，提交时会再次检查该时段的可用量。</p>
+        <h1>物品预约</h1>
+        <p class="section-sub">选择物品和借用时段，提交预约。</p>
         <button v-if="initialLocation" class="link-button" type="button" @click="emit('back-to-locations')">← 返回资源总览</button>
       </div>
-      <button class="refresh-button" :disabled="loading" @click="loadItems">{{ loading ? '刷新中…' : '刷新' }}</button>
+
     </div>
 
     <p v-if="bookingMessage" class="success-banner" role="status">{{ bookingMessage }}</p>
-    <div class="filter-bar">
-      <input v-model="filters.keyword" maxlength="100" aria-label="搜索物品名称或介绍" type="search" placeholder="搜索物品名称或介绍" @input="applyFilters(true)">
-      <select aria-label="按地点筛选" v-model="filters.locationId" @change="applyFilters()">
-        <option value="">全部地点</option>
-        <option v-for="loc in locations" :key="loc.id" :value="String(loc.id)">{{ loc.name }}</option>
-      </select>
-      <label class="filter-toggle">
-        <input v-model="filters.onlyAvailable" type="checkbox" @change="applyFilters()"> 只看有库存
-      </label>
-    </div>
+    <form class="advanced-search" role="search" aria-label="物品高级搜索" @submit.prevent="applyFilters">
+      <div class="search-primary-row">
+        <label class="advanced-field search-keyword"><span>关键词</span><input v-model="searchForm.keyword" aria-label="关键词" maxlength="100" type="search" placeholder="搜索物品名称或介绍"></label>
+        <div class="search-actions">
+          <button class="primary-button" type="submit">搜索</button>
+          <button class="refresh-button" type="button" @click="resetFilters">重置</button>
+        </div>
+      </div>
+      <div class="advanced-search-fields">
+        <label class="advanced-field"><span>存放地点</span><select v-model="searchForm.locationId" aria-label="存放地点">
+          <option value="">全部地点</option><option v-for="loc in locations" :key="loc.id" :value="String(loc.id)">{{ loc.name }}</option>
+        </select></label>
+        <label class="advanced-field"><span>物品类型</span><select v-model="searchForm.isValuable" aria-label="物品类型">
+          <option value="">全部类型</option><option value="false">普通物品</option><option value="true">贵重物品</option>
+        </select></label>
+        <label class="advanced-field"><span>库存状态</span><select v-model="searchForm.onlyAvailable" aria-label="库存状态">
+          <option :value="false">全部库存</option><option :value="true">当前有库存</option>
+        </select></label>
+        <label class="advanced-field"><span>排序</span><select v-model="searchForm.sort" aria-label="排序">
+          <option value="CREATED_DESC">最新上架</option><option value="AVAILABLE_DESC">可借库存最多</option><option value="NAME_ASC">物品名称</option>
+        </select></label>
+      </div>
+    </form>
 
     <p v-if="locationsError" class="error-card" role="alert">地点列表加载失败：{{ locationsError }} <button class="link-button" @click="loadLocations">重试</button></p>
     <p v-if="loadError" class="state-card error-card" role="alert">{{ loadError }} <button class="link-button" @click="loadItems">重试</button></p>
@@ -85,6 +98,7 @@
 </template>
 
 <script setup>
+import { useReloadOnReturn } from '../lib/useReloadOnReturn'
 import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getLocations, getPublicItems, getPublicItem } from '../lib/api'
 import ReservationForm from '../features/user/ReservationForm.vue'
@@ -103,10 +117,11 @@ const detailLoading = ref(false)
 const page = ref(0)
 const size = 12
 const total = ref(0)
-const filters = reactive({ keyword: '', locationId: props.initialLocation ? String(props.initialLocation.id) : '', onlyAvailable: false })
+const defaultFilters = () => ({ keyword: '', locationId: '', onlyAvailable: false, isValuable: '', sort: 'CREATED_DESC' })
+const searchForm = reactive({ ...defaultFilters(), locationId: props.initialLocation ? String(props.initialLocation.id) : '' })
+const filters = reactive({ ...searchForm })
 let listVersion = 0
 let detailVersion = 0
-let searchTimer
 function locationName(id) { return locations.value.find((loc) => loc.id === id)?.name || '未标注存放地点' }
 function borrowLimit(item) { return item.rules.maxBorrowDays == null ? '最长借用时长尚未配置' : `单次最长 ${item.rules.maxBorrowDays} 天` }
 function advanceLimit(item) { return item.rules.advanceDays == null ? '提前预约规则尚未配置' : `最多提前 ${item.rules.advanceDays} 天预约` }
@@ -115,7 +130,6 @@ async function loadLocations() {
   catch (error) { locationsError.value = error.message }
 }
 async function loadItems() {
-  clearTimeout(searchTimer)
   const version = ++listVersion
   loading.value = true
   loadError.value = ''
@@ -133,15 +147,18 @@ async function loadItems() {
     visibleItems.value = []; total.value = 0; loadError.value = error.message
   } finally { if (version === listVersion) loading.value = false }
 }
-function applyFilters(debounce = false) {
+function applyFilters() {
+  Object.assign(filters, searchForm, { keyword: searchForm.keyword.trim() })
   page.value = 0
   ++listVersion
-  clearTimeout(searchTimer)
-  if (debounce === true) searchTimer = setTimeout(loadItems, 300)
-  else loadItems()
+  loadItems()
+}
+function resetFilters() {
+  Object.assign(searchForm, defaultFilters())
+  applyFilters()
 }
 watch(() => props.initialLocation?.id, id => {
-  filters.locationId = id == null ? '' : String(id)
+  searchForm.locationId = id == null ? '' : String(id)
   applyFilters()
 })
 function changePage(next) { page.value = next; loadItems() }
@@ -163,5 +180,6 @@ async function openDetail(item) {
 }
 function onKeydown(event) { if (event.key === 'Escape') closeDetail() }
 onMounted(() => { loadLocations(); loadItems(); window.addEventListener('keydown', onKeydown) })
-onUnmounted(() => { clearTimeout(searchTimer); ++listVersion; ++detailVersion; window.removeEventListener('keydown', onKeydown) })
+onUnmounted(() => { ++listVersion; ++detailVersion; window.removeEventListener('keydown', onKeydown) })
+useReloadOnReturn(() => { loadLocations(); loadItems() })
 </script>

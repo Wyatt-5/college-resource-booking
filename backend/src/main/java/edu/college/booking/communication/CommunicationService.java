@@ -5,6 +5,7 @@ import edu.college.booking.auth.AuthorizationService;
 import edu.college.booking.common.ApiProblem;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +20,8 @@ public class CommunicationService {
     public record Announcement(long id, String title, String content, String status, String authorName,
             String editorName, Instant createdAt, Instant updatedAt) {}
     public record AnnouncementInput(String title, String content, String status) {}
+    public record AnnouncementVersion(long id, Instant updatedAt) {}
+    public record AnnouncementReadInput(List<AnnouncementVersion> announcements) {}
     public record Feedback(long id, long userId, String userName, String content, String status, String response,
             String handlerName, Instant handledAt, Instant createdAt, Instant updatedAt) {}
     public record FeedbackInput(String content) {}
@@ -60,6 +63,46 @@ public class CommunicationService {
         long total=db.queryForObject("SELECT count(*) FROM announcements a"+where,Long.class);
         var rows=db.query(ANNOUNCEMENTS+where+" ORDER BY a.updated_at DESC,a.id DESC LIMIT ? OFFSET ?",this::announcement,size,(long)page*size);
         return new Page<>(rows,page,size,total);
+    }
+
+    public Page<Announcement> unreadAnnouncements(Authentication authentication, int page, int size) {
+        validatePage(page, size);
+        var actor = auth.requireActive(authentication);
+        String where = """
+            WHERE a.status = 'PUBLISHED'
+              AND NOT EXISTS (
+                SELECT 1 FROM announcement_reads r
+                WHERE r.user_id = ? AND r.announcement_id = a.id
+                  AND r.seen_updated_at >= a.updated_at
+              )
+            """;
+        long total = db.queryForObject("SELECT count(*) FROM announcements a " + where,
+                Long.class, actor.id());
+        var rows = db.query(ANNOUNCEMENTS + where + " ORDER BY a.updated_at DESC, a.id DESC LIMIT ? OFFSET ?",
+                this::announcement, actor.id(), size, (long) page * size);
+        return new Page<>(rows, page, size, total);
+    }
+
+    @Transactional
+    public void markAnnouncementsRead(Authentication authentication, AnnouncementReadInput input) {
+        var actor = auth.requireActive(authentication);
+        if (input == null || input.announcements() == null || input.announcements().size() > 100) {
+            throw invalid("每次最多确认100条公告");
+        }
+        for (var version : input.announcements()) {
+            if (version == null || version.id() < 1 || version.updatedAt() == null) {
+                throw invalid("公告编号或版本无效");
+            }
+            // Only acknowledge the version actually displayed. A concurrent edit must remain unread.
+            db.update("""
+                INSERT INTO announcement_reads (user_id, announcement_id, seen_updated_at)
+                SELECT ?, a.id, a.updated_at FROM announcements a
+                WHERE a.id = ? AND a.status = 'PUBLISHED' AND a.updated_at = ?
+                ON CONFLICT (user_id, announcement_id) DO UPDATE
+                SET seen_updated_at = GREATEST(announcement_reads.seen_updated_at, EXCLUDED.seen_updated_at),
+                    read_at = CURRENT_TIMESTAMP
+                """, actor.id(), version.id(), Timestamp.from(version.updatedAt()));
+        }
     }
     @Transactional
     public Announcement createAnnouncement(Authentication authentication,AnnouncementInput input) {

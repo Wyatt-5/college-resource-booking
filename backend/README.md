@@ -2,6 +2,8 @@
 
 技术栈：Java 21、Spring Boot 4.1.2、PostgreSQL、Flyway、Maven Wrapper。无需在电脑上单独安装 Maven。
 
+2026-11-17新增[云端部署配置](../deploy/README.md)，后端以非 root 容器运行，数据库和图片使用独立持久化卷。当前是经本机 SSH 隧道访问的受限测试环境，公开域名与 HTTPS 尚未部署；实际验证见[部署记录](../docs/2026-11-17%20云端部署与两机联调记录.md)。
+
 ## 本地启动（Windows PowerShell）
 
 在仓库根目录执行：
@@ -29,7 +31,7 @@ Mac/Linux：`cp .env.example .env`、`docker compose -f infra/compose.yaml up -d
 | `POST /api/v1/items` | 上架物品 | 可带 `initialStock`（0–500），同一事务生成库存和唯一编号 |
 | `PUT /api/v1/items/{id}/stock` | 物品和更新后的库存摘要 | 管理员设置库存总数；有未结束预约或实物非可借状态时可能拒绝减少 |
 
-首次启动时 Flyway 自动执行迁移。V1–V14 包含存放地点、物品、账号、预约和审核、借还、公告反馈、个人资料及部门；预置地点仅供本地初始化。已有数据库只执行尚未执行的迁移，不要修改已执行的迁移文件。普通物品预约在同一数据库事务中锁定物品并校验时段容量；贵重物品和地点申请由审核员处理。预约、审核和交接均写入审计日志。详见 [资源模型与物品接口说明](../docs/资源模型与物品接口说明.md)。
+首次启动时 Flyway 自动执行迁移。V1–V16 包含存放地点、物品、账号、预约和审核、借还、公告反馈、个人资料、部门、公告已读及预约后台任务；后续迁移从V17开始。预置地点仅供本地初始化。已有数据库只执行尚未执行的迁移，不要修改已执行的迁移文件。普通物品预约在同一数据库事务中锁定物品并校验时段容量；贵重物品和地点申请由审核员处理。预约、审核和交接均写入审计日志。详见 [资源模型与物品接口说明](../docs/资源模型与物品接口说明.md)。
 
 ## 首次管理员与登录接口
 
@@ -69,3 +71,15 @@ cd backend
 测试检查健康、地点、目录接口、登录会话/CSRF 和基础授权规则。设置 `CATALOG_DB_TEST=true` 可启用真实 PostgreSQL 物品测试，包括并发幂等、权限、实物状态、照片和核验回滚。数据库端到端检查需启动 PostgreSQL。
 
 新模块按 `controller -> service -> repository` 分层；数据库变更只新增 Flyway 迁移文件，**不要修改已经被共享数据库执行过的迁移文件**。新增或修改接口时同步修改 `../contracts/openapi/openapi.yaml`，再让前端联调。
+
+## 公告登录提醒
+
+登录或恢复有效会话后，用户端读取 `GET /api/v1/announcements/unread` 并弹出未读的已发布公告。关闭浮窗时，`POST /api/v1/announcements/read` 仅确认实际展示过的公告 ID 和 `updatedAt` 版本，需登录及 CSRF。阅读记录按账号保存到 V15 的 `announcement_reads` 表；编辑或重新发布后的新版本会再次提醒，撤下公告不提醒。未翻看的分页不会被标为已读。
+
+物品高级搜索仍使用 `GET /api/v1/items`，新增可选 `isValuable`（true 贵重、false 普通，省略为全部）和 `sort`（DEFAULT、CREATED_DESC、NAME_ASC、AVAILABLE_DESC）。保留公开目录的启用状态限制和管理权限校验；总数、排序与分页均在数据库处理，排序只接受固定枚举。
+
+## 待审过期与未归还提醒
+
+V16新增 `background_tasks`、`return_reminders`，扩展审核结论 `EXPIRED`。运行 [worker](../worker/README.md) 后，待审申请到达开始时间自动过期并写入预约日志、审计；已领取且到期未归还的物品生成系统内提醒。`GET /api/v1/return-reminders` 返回本人提醒，`managed=true` 仅审核员和系统管理员可查看全部。提交归还后暂不展示提醒，核验驳回后重现，通过核验后不再展示。
+
+内部任务接口为 `POST /api/v1/internal/tasks/claim`、`/{id}/complete`、`/{id}/fail`，独立Bearer服务令牌，用户会话不能调用；至少32字符的 `TASK_SERVICE_TOKEN` 从环境或根目录 `.env` 提供，未配置时拒绝访问。浏览器写操作仍保留CSRF保护。默认任务延迟最多约一个轮询周期，积压分批处理；任务服务绝不自动核验归还或恢复库存。失败排查与两机部署见[任务服务说明](../docs/独立任务服务接口草案.md)。

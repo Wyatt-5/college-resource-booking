@@ -17,6 +17,20 @@ public class AccountRepository {
         return jdbc.queryForObject("SELECT count(*) FROM users", Long.class);
     }
 
+    public long countActiveSystemAdmins() {
+        return jdbc.queryForObject("""
+                SELECT count(*) FROM role_grants rg
+                JOIN users u ON u.id = rg.user_id
+                WHERE rg.role = 'SYSTEM_ADMIN' AND u.status = 'ACTIVE'
+                """, Long.class);
+    }
+
+    public boolean isSystemAdmin(long userId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM role_grants WHERE user_id = ? AND role = 'SYSTEM_ADMIN')",
+                Boolean.class, userId));
+    }
+
     public Optional<Account> findByLogin(String loginName) {
         return jdbc.query("SELECT id, login_name, display_name, password_hash, status FROM users WHERE login_name = ?",
                 (rs, row) -> mapAccount(rs), loginName).stream().findFirst();

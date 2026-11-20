@@ -110,8 +110,8 @@ onUnmounted(() => { ++version })
 <template>
   <div class="item-booking">
     <h3>选择借用时段</h3>
-    <p class="booking-help">开始和结束均按整点选择，支持跨天。跨夜期间也会持续占用库存。</p>
-    <p class="booking-help">{{ item.isValuable ? '贵重物品需其他审核员审批，待审申请暂不占用库存。' : '普通物品提交时，系统会检查整个借用期间的可用库存。' }}</p>
+
+
     <div class="calendar-toolbar">
       <button class="refresh-button" type="button" aria-label="查看前一天占用" :disabled="viewDate <= today || submitting" @click="viewDate = addDays(viewDate, -1)">‹</button>
       <label class="field"><span>查看当天库存占用</span><input v-model="viewDate" type="date" :min="today" :max="lastViewDate" :disabled="submitting" required></label>
@@ -132,8 +132,8 @@ onUnmounted(() => { ++version })
         </button>
       </div>
     </div>
-    <p class="booking-help">两小时一组、每格一小时。点击时段选择，再点已选的两端可取消；连续多小时可依次点击相邻时段。跨天也可在下方设置起止日期。</p>
-    <p v-if="!selectionActive" class="booking-help">请点击时间表或修改下方日期时间以选择预约时段。</p>
+
+
     <p v-if="item.unitSummary.available < 1" class="field-error">目前没有可借实物，请等待管理员恢复库存。</p>
     <div v-else-if="!currentUser"><p>登录后即可提交预约。</p><button class="primary-button" type="button" @click="emit('login-requested')">去登录</button></div>
     <form v-else @submit.prevent="submit">

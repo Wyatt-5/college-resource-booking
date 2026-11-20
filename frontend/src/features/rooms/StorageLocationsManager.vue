@@ -1,4 +1,5 @@
 <script setup>
+import { useReloadOnReturn } from '../../lib/useReloadOnReturn'
 import { onMounted, reactive, ref } from 'vue'
 import { getLocations, uploadLocationImage, updateLocation, removeLocation } from '../../lib/api'
 import BookingModal from '../../components/BookingModal.vue'
@@ -26,6 +27,7 @@ async function remove(){
   try{await removeLocation(removing.value.id);removing.value=null;await load();message.value='地点已移除，历史记录仍会保留。'}catch(e){modalError.value=e.message||'移除失败'}finally{busy.value=null}
 }
 onMounted(load)
+useReloadOnReturn(load)
 </script>
 <template>
   <div class="storage-locations">

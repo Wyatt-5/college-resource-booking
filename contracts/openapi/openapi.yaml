@@ -11,6 +11,103 @@ servers:
 - url: http://localhost:8080/api/v1
   description: 本地开发；部署后通过环境配置替换地址
 paths:
+  /return-reminders:
+    get:
+      summary: 查看当前逾期未归还提醒
+      description: 默认只返回本人；managed=true 仅系统管理员或审核员可查看全部。提交归还后暂不展示，核验驳回后再次展示，通过核验后不再展示。不会修改实物库存。
+      security: [ { sessionCookie: [] } ]
+      parameters:
+      - { name: managed, in: query, schema: { type: boolean, default: false } }
+      - { name: page, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      - { name: size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: 提醒分页
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReturnReminderPage' }
+        '400': { description: 分页参数无效 }
+        '401': { description: 未登录或会话失效 }
+        '403': { description: 无管理权限 }
+  /internal/tasks/claim:
+    post:
+      summary: 独立 worker 领取待审过期和未归还提醒任务
+      description: 单独服务令牌认证，不接受用户会话。租约180秒，每项任务最多尝试5次。该接口本身不可盲目重试；未收到响应时等待租约超时后重新轮询。
+      security: [ { taskServiceToken: [] } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 20, default: 5 }
+      responses:
+        '200':
+          description: 任务快照和后端时间；以此时间判断边界，提交时后端再次校验最新状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [serverTime, tasks]
+                properties:
+                  serverTime: { type: string, format: date-time }
+                  tasks: { type: array, items: { $ref: '#/components/schemas/BackgroundTask' } }
+        '400': { description: 每批数量无效 }
+        '401': { description: 服务令牌无效、未配置或少于32字符 }
+  /internal/tasks/{id}/complete:
+    post:
+      summary: 提交任务处理结果
+      description: 同一租约重复提交返回已完成状态；过期或被替换的租约返回409。后端锁定申请再次判断，状态已变更则SKIPPED；仍符合条件的任务不能主动跳过。到期提醒不等于归还核验。
+      security: [ { taskServiceToken: [] } ]
+      parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leaseToken, outcome]
+              properties:
+                leaseToken: { type: string }
+                outcome: { type: string, enum: [EXPIRE, REMIND, SKIP] }
+                message: { type: string, minLength: 1, maxLength: 500, description: REMIND成功记录时必填 }
+      responses:
+        '200':
+          description: 处理成功或因状态变化跳过
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResult' }
+        '400': { description: 结果与任务类型不匹配、提醒内容无效或错误地跳过符合条件的任务 }
+        '401': { description: 服务令牌无效 }
+        '404': { description: 任务不存在 }
+        '409': { description: 租约无效 }
+  /internal/tasks/{id}/fail:
+    post:
+      summary: 记录失败并按退避规则重试
+      description: 同一租约重复失败报告安全。首次退避10秒，随后20/40/80秒，最多5次；失败原因最长保留500字符。最终FAILED保留记录供运维排查，不自动变更预约或库存。
+      security: [ { taskServiceToken: [] } ]
+      parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leaseToken]
+              properties:
+                leaseToken: { type: string }
+                reason: { type: string }
+      responses:
+        '200':
+          description: 已安排重试或达到失败次数上限
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResult' }
+        '401': { description: 服务令牌无效 }
+        '404': { description: 任务不存在 }
+        '409': { description: 租约无效或任务已完成 }
   /announcements:
     get:
       summary: 获取已发布公告，管理人员可查看全部
@@ -37,6 +134,48 @@ paths:
         '201': { description: 发布成功 }
         '400': { description: 标题或内容无效 }
         '403': { description: 无管理权限 }
+  /announcements/unread:
+    get:
+      summary: 获取当前账号尚未阅读的已发布公告，用于登录后弹窗
+      security: [ { sessionCookie: [] } ]
+      parameters:
+      - { name: page, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      - { name: size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        '200':
+          description: 按更新时间倒序返回未读版本；撤下的公告不返回
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnnouncementPage' }
+        '400': { description: 分页参数无效 }
+        '401': { description: 未登录或会话失效 }
+  /announcements/read:
+    post:
+      summary: 确认已展示的公告版本为已读
+      description: 仅修改当前账号的记录，需 CSRF。重复确认安全；版本已更新或公告已撤下时忽略，避免误标记未展示的新内容。
+      security: [ { sessionCookie: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [announcements]
+              properties:
+                announcements:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [id, updatedAt]
+                    properties:
+                      id: { type: integer, format: int64, minimum: 1 }
+                      updatedAt: { type: string, format: date-time }
+      responses:
+        '204': { description: 已保存当前账号的阅读记录 }
+        '400': { description: 公告编号、版本或数量无效 }
+        '401': { description: 未登录或会话失效 }
+        '403': { description: CSRF 无效或账号停用 }
   /announcements/{id}:
     put:
       summary: 修改、撤下或重新发布公告
@@ -230,7 +369,7 @@ paths:
       responses:
         '204': { description: 账号已停用 }
         '403': { description: 仅系统管理员可操作 }
-        '409': { description: 不能停用自己或目标有未完成预约 }
+        '409': { description: 不能停用自己、目标有未完成预约，或目标为最后一个系统管理员 }
   /users/me/password:
     post:
       summary: 修改当前账号密码
@@ -282,7 +421,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserProfile'
         '409':
-          description: 禁止修改自己的授权
+          description: 禁止修改自己的授权，或移除最后一个系统管理员的权限
   /audit-logs:
     get:
       summary: 系统管理员读取最近审计记录
@@ -375,6 +514,18 @@ paths:
         schema:
           type: boolean
           default: false
+      - name: isValuable
+        in: query
+        description: true 仅贵重物品，false 仅普通物品；省略则全部类型
+        schema:
+          type: boolean
+      - name: sort
+        in: query
+        description: 服务端筛选后排序并分页；库存指当前 AVAILABLE 实物数
+        schema:
+          type: string
+          enum: [DEFAULT, CREATED_DESC, NAME_ASC, AVAILABLE_DESC]
+          default: DEFAULT
       - name: page
         in: query
         schema:
@@ -1479,6 +1630,16 @@ paths:
       - name: itemId
         in: query
         schema: { type: integer, format: int64 }
+      - name: status
+        in: query
+        description: 按预约状态筛选；传非法值时返回 400
+        schema:
+          type: string
+          enum: [PENDING_APPROVAL, CONFIRMED, REJECTED, CANCELLED, EXPIRED]
+      - name: keyword
+        in: query
+        description: 按申请人姓名、登录名或资源名称不区分大小写地匹配，最长50字符；百分号、下划线与反斜线按字面处理
+        schema: { type: string, maxLength: 50 }
       - name: page
         in: query
         schema: { type: integer, minimum: 0, default: 0 }
@@ -1764,6 +1925,48 @@ paths:
       - sessionCookie: []
 components:
   schemas:
+    BackgroundTask:
+      type: object
+      required: [id, type, reservationId, leaseToken, leaseUntil, resourceName, status, startAt, endAt]
+      properties:
+        id: { type: integer, format: int64 }
+        type: { type: string, enum: [EXPIRE_PENDING, REMIND_OVERDUE] }
+        reservationId: { type: integer, format: int64 }
+        leaseToken: { type: string, format: uuid }
+        leaseUntil: { type: string, format: date-time }
+        resourceName: { type: string }
+        status: { type: string }
+        handoverStatus: { type: string, nullable: true }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+    TaskResult:
+      type: object
+      required: [id, state]
+      properties:
+        id: { type: integer, format: int64 }
+        state: { type: string, enum: [PENDING, SUCCEEDED, SKIPPED, FAILED] }
+    ReturnReminder:
+      type: object
+      required: [id, reservationId, resourceName, applicantId, applicantName, endAt, handoverStatus, message, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        reservationId: { type: integer, format: int64 }
+        resourceName: { type: string }
+        applicantId: { type: integer, format: int64 }
+        applicantName: { type: string }
+        endAt: { type: string, format: date-time }
+        handoverStatus: { type: string, enum: [CHECKED_OUT, RETURN_REJECTED] }
+        unitCodes: { type: string, nullable: true, description: 实物编号用顿号分隔 }
+        message: { type: string }
+        createdAt: { type: string, format: date-time }
+    ReturnReminderPage:
+      type: object
+      required: [content, page, size, totalElements]
+      properties:
+        content: { type: array, items: { $ref: '#/components/schemas/ReturnReminder' } }
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
     AnnouncementInput:
       type: object
       required: [title, content]
@@ -1965,7 +2168,7 @@ components:
         decision:
           type: string
           nullable: true
-          enum: [APPROVED, REJECTED, AUTO_CONFIRMED]
+          enum: [APPROVED, REJECTED, AUTO_CONFIRMED, EXPIRED]
         decisionReason:
           type: string
           nullable: true
@@ -2543,6 +2746,10 @@ components:
             details: {}
             requestId: 3f2b8f0e
   securitySchemes:
+    taskServiceToken:
+      type: http
+      scheme: bearer
+      description: 独立任务服务专用的TASK_SERVICE_TOKEN，至少32字符；跨机器部署使用受保护的内网或HTTPS，禁止写入前端或提交到仓库。
     sessionCookie:
       type: apiKey
       in: cookie

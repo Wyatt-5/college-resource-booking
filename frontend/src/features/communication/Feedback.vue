@@ -1,4 +1,5 @@
 <script setup>
+import { useReloadOnReturn } from '../../lib/useReloadOnReturn'
 import { onMounted, ref, watch } from 'vue'
 import { getFeedback, createFeedback, handleFeedback } from '../../lib/api'
 import BookingModal from '../../components/BookingModal.vue'
@@ -13,13 +14,14 @@ function openHandle(row){formError.value='';editing.value={id:row.id,content:row
 async function save(){if(saving.value)return;saving.value=true;formError.value='';try{await handleFeedback(editing.value.id,{status:editing.value.status,response:editing.value.response.trim()});editing.value=null;notice.value='处理结果已保存。';await load()}catch(e){formError.value=e.message||'保存失败'}finally{saving.value=false}}
 watch(()=>props.currentUser?.id,()=>{page.value=0;load()})
 onMounted(load)
+useReloadOnReturn(load)
 </script>
 <template>
   <section class="content-section feedback-page">
-    <div class="section-heading"><div><h1>{{ managed?'用户反馈':'我的反馈' }}</h1><p class="section-sub">{{ managed?'查看并回复用户提交的问题和建议。':'提交问题或建议，并查看处理进度。' }}</p></div><div class="actions"><button v-if="currentUser" class="refresh-button" type="button" :disabled="loading" @click="load">刷新</button><button v-if="!managed" class="primary-button" type="button" @click="currentUser ? (showForm=true) : emit('login-requested')">提交反馈</button></div></div>
+    <div class="section-heading"><div><h1>{{ managed?'用户反馈':'我的反馈' }}</h1><p class="section-sub">{{ managed?'查看并回复用户提交的问题和建议。':'提交问题或建议，并查看处理进度。' }}</p></div><div class="actions"><button v-if="!managed" class="primary-button" type="button" @click="currentUser ? (showForm=true) : emit('login-requested')">提交反馈</button></div></div>
     <p v-if="!currentUser" class="state-card">登录后可提交和查看自己的反馈。</p>
     <template v-else><p v-if="notice" class="notice" role="status">{{ notice }}</p><p v-if="error" class="state-card error-card" role="alert">{{ error }}</p><p v-if="loading" class="state-card">正在读取反馈…</p><p v-else-if="!rows.length && !error" class="state-card">暂无反馈。</p>
-      <div v-else class="feedback-list"><article v-for="row in rows" :key="row.id" class="feedback-card"><div class="card-head"><strong>{{ managed?row.userName:'我的反馈' }}</strong><span class="status-badge" :class="row.status==='RESOLVED'?'badge-ok':'badge-normal'">{{ labels[row.status] || row.status }}</span></div><p class="feedback-content">{{ row.content }}</p><p class="card-hint">提交于 {{ format(row.createdAt) }}</p><div v-if="row.response" class="reply"><strong>处理回复</strong><p>{{ row.response }}</p><small v-if="row.handlerName">处理人：{{ row.handlerName }}<template v-if="row.handledAt"> · {{ format(row.handledAt) }}</template></small></div><button v-if="managed" class="refresh-button" type="button" @click="openHandle(row)">查看并处理</button></article></div>
+      <div v-else class="feedback-list"><article v-for="row in rows" :key="row.id" class="feedback-card"><div class="card-head"><strong>{{ managed?row.userName:'我的反馈' }}</strong><span class="status-badge" :class="row.status==='RESOLVED'?'badge-ok':'badge-normal'">{{ labels[row.status] || row.status }}</span></div><p class="feedback-content">{{ row.content }}</p><div v-if="row.response" class="reply"><strong>处理回复</strong><p>{{ row.response }}</p><small v-if="row.handlerName">处理人：{{ row.handlerName }}<template v-if="row.handledAt"> · {{ format(row.handledAt) }}</template></small></div><button v-if="managed" class="refresh-button" type="button" @click="openHandle(row)">查看并处理</button></article></div>
       <nav v-if="total>size" class="pagination-bar" aria-label="反馈分页"><button class="refresh-button" :disabled="page===0||loading" @click="page--;load()">上一页</button><span>第 {{ page+1 }} 页 · 共 {{ total }} 条</span><button class="refresh-button" :disabled="(page+1)*size>=total||loading" @click="page++;load()">下一页</button></nav>
     </template>
     <BookingModal v-if="showForm" title="提交反馈" :busy="saving" @close="showForm=false"><form @submit.prevent="submit"><label class="field"><span>问题或建议</span><textarea v-model.trim="content" rows="6" maxlength="2000" required placeholder="请描述遇到的问题或你的建议"></textarea></label><p v-if="formError" class="form-error" role="alert">{{ formError }}</p><button class="primary-button" :disabled="saving" type="submit">{{ saving?'提交中…':'提交反馈' }}</button></form></BookingModal>

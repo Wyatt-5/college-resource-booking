@@ -13,8 +13,10 @@ public class ItemController {
     public ResponseEntity<?> list(@RequestParam(required=false) Long locationId,@RequestParam(defaultValue="") String keyword,
                          @RequestParam(defaultValue="0") int page,@RequestParam(defaultValue="20") int size,
                          @RequestParam(defaultValue="false") boolean onlyAvailable,@RequestParam(required=false) String status,
-                         @RequestParam(defaultValue="public") String scope, jakarta.servlet.http.HttpServletRequest request){
-        ItemPage result=service.list(locationId,keyword,page,size,onlyAvailable,status,scope);
+                         @RequestParam(defaultValue="public") String scope,
+                         @RequestParam(required=false) Boolean isValuable,
+                         @RequestParam(defaultValue="DEFAULT") String sort, jakarta.servlet.http.HttpServletRequest request){
+        ItemPage result=service.list(locationId,keyword,page,size,onlyAvailable,status,scope,isValuable,sort);
         boolean paged=request.getParameter("page")!=null||request.getParameter("size")!=null;
         return ResponseEntity.ok().header("X-Total-Count",Long.toString(result.totalElements()))
                 .body(paged?result:result.content());

@@ -25,7 +25,7 @@ class ItemApiTest {
                 new Item.UnitSummary(3,1),Instant.parse("2026-01-01T00:00:00Z"),List.of());
     }
     @Test void listUsesFrontendFieldNamesAndPage()throws Exception{
-        given(repository.page(1L,"相机",0,20,false,null,null)).willReturn(new ItemPage(List.of(item()),0,20,1));
+        given(repository.page(1L,"相机",0,20,false,null,null,null,"DEFAULT")).willReturn(new ItemPage(List.of(item()),0,20,1));
         mvc.perform(get("/api/v1/items").param("page","0").param("locationId","1").param("keyword"," 相机 "))
           .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
           .andExpect(jsonPath("$.content[0].unitSummary.available").value(1))
@@ -44,7 +44,7 @@ class ItemApiTest {
         mvc.perform(get("/api/v1/items/7")).andExpect(status().isNotFound());
     }
     @Test void legacyListWithoutPageRemainsAnArray()throws Exception{
-        given(repository.page(null,"",0,20,false,null,null)).willReturn(new ItemPage(List.of(item()),0,20,1));
+        given(repository.page(null,"",0,20,false,null,null,null,"DEFAULT")).willReturn(new ItemPage(List.of(item()),0,20,1));
         mvc.perform(get("/api/v1/items")).andExpect(status().isOk()).andExpect(jsonPath("$[0].unitSummary.total").value(3))
           .andExpect(header().string("X-Total-Count","1"));
     }

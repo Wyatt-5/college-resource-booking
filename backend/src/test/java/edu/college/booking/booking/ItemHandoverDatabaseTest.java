@@ -36,6 +36,7 @@ class ItemHandoverDatabaseTest {
     @Autowired JdbcTemplate db;
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired edu.college.booking.tasks.ReservationTaskService tasks;
     long locationId;
     long itemId;
     long unitId;
@@ -79,6 +80,8 @@ class ItemHandoverDatabaseTest {
         db.update("DELETE FROM catalog_audit_outbox WHERE actor IN (?,?)", ownerLogin, managerLogin);
         db.update("DELETE FROM audit_logs WHERE target_type='RESERVATION' AND target_id=?", reservationId);
         db.update("DELETE FROM reservation_action_idempotency WHERE reservation_id=?", reservationId);
+        db.update("DELETE FROM return_reminders WHERE reservation_id=?", reservationId);
+        db.update("DELETE FROM background_tasks WHERE reservation_id=?", reservationId);
         db.update("DELETE FROM reservations WHERE id=?", reservationId);
         db.update("DELETE FROM item_units WHERE id=?", unitId);
         db.update("DELETE FROM items WHERE id=?", itemId);
@@ -105,7 +108,16 @@ class ItemHandoverDatabaseTest {
         }
         assertEquals("CHECKED_OUT", db.queryForObject("SELECT status FROM item_units WHERE id=?", String.class, unitId));
 
+        db.update("UPDATE reservations SET end_at=? WHERE id=?", Timestamp.from(Instant.now().minusSeconds(60)), reservationId);
+        var task = tasks.claim(20).tasks().stream().filter(row -> row.reservationId() == reservationId).findFirst().orElseThrow();
+        tasks.complete(task.id(), new edu.college.booking.tasks.ReservationTaskService.Completion(task.leaseToken(), "REMIND", "借用已到期，请提交归还并等待核验。"));
+        mvc.perform(get("/api/v1/return-reminders").with(user(loginDetails.loadUserByUsername(ownerLogin))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1));
+        assertEquals("CHECKED_OUT", db.queryForObject("SELECT status FROM item_units WHERE id=?", String.class, unitId));
+
         submitPhoto("return-attempt-1", "第一次归还");
+        mvc.perform(get("/api/v1/return-reminders").with(user(loginDetails.loadUserByUsername(ownerLogin))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
         long firstPhoto = db.queryForObject("""
                 SELECT min(p.id) FROM return_photos p
                 JOIN return_submissions s ON s.id=p.submission_id
@@ -125,6 +137,8 @@ class ItemHandoverDatabaseTest {
                         .content("{\"decision\":\"REJECT\",\"reason\":\"照片不清楚\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.handoverStatus").value("RETURN_REJECTED"));
         assertEquals("RETURN_SUBMITTED", db.queryForObject("SELECT status FROM item_units WHERE id=?", String.class, unitId));
+        mvc.perform(get("/api/v1/return-reminders").with(user(loginDetails.loadUserByUsername(ownerLogin))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1));
 
         submitPhoto("return-attempt-2", "补拍清晰照片");
         mvc.perform(post("/api/v1/reservations/" + reservationId + "/return-verification")
@@ -133,6 +147,8 @@ class ItemHandoverDatabaseTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.handoverStatus").value("COMPLETED"));
         assertEquals("AVAILABLE", db.queryForObject("SELECT status FROM item_units WHERE id=?", String.class, unitId));
         assertEquals("COMPLETED", db.queryForObject("SELECT handover_status FROM reservations WHERE id=?", String.class, reservationId));
+        mvc.perform(get("/api/v1/return-reminders").with(user(loginDetails.loadUserByUsername(ownerLogin))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
         assertEquals(2L, db.queryForObject("SELECT count(*) FROM return_submissions WHERE reservation_id=?", Long.class, reservationId));
     }
 

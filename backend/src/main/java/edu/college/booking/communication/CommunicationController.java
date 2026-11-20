@@ -19,6 +19,17 @@ public class CommunicationController {
     public ResponseEntity<CommunicationService.Announcement> create(Authentication auth,@RequestBody CommunicationService.AnnouncementInput input){
         var result=service.createAnnouncement(auth,input);return ResponseEntity.created(URI.create("/api/v1/announcements/"+result.id())).body(result);
     }
+    @GetMapping("/announcements/unread")
+    public CommunicationService.Page<CommunicationService.Announcement> unreadAnnouncements(Authentication auth,
+            @RequestParam(defaultValue="0") int page, @RequestParam(defaultValue="10") int size) {
+        return service.unreadAnnouncements(auth, page, size);
+    }
+    @PostMapping("/announcements/read")
+    public ResponseEntity<Void> markAnnouncementsRead(Authentication auth,
+            @RequestBody CommunicationService.AnnouncementReadInput input) {
+        service.markAnnouncementsRead(auth, input);
+        return ResponseEntity.noContent().build();
+    }
     @PutMapping("/announcements/{id}")
     public CommunicationService.Announcement update(Authentication auth,@PathVariable long id,@RequestBody CommunicationService.AnnouncementInput input){return service.updateAnnouncement(auth,id,input);}
     @PostMapping("/feedback")
