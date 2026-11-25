@@ -236,7 +236,7 @@ onMounted(() => {
         </div>
       </nav>
 
-      <main class="main-content" @click="mobileMenuOpen = false">
+      <main class="main-content" tabindex="0" aria-label="页面内容" @click="mobileMenuOpen = false">
         <div class="workspace-strip">
           <div class="page-tabs" role="tablist" :aria-label="mode === 'admin' ? '管理端已打开页面' : '用户端已打开页面'">
             <div v-for="tab in visibleTabs" :key="tab.key" class="page-tab" :class="{ active: activeSection === tab.key }">
