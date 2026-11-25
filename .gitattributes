@@ -1,1 +1,2 @@
 deploy/*.sh text eol=lf
+deploy/public-entry/*.sh text eol=lf

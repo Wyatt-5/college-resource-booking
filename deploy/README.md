@@ -2,13 +2,15 @@
 
 本目录提供受限测试部署：云端运行 Nginx、Java API、PostgreSQL；Windows 本机运行独立 worker，经加密 SSH 隧道调用云端 API。宝塔不参与应用进程管理。正式公网发布仍需域名、备案、可信 HTTPS 和上线验收。
 
-截至2026-11-20，域名实名认证已通过，网站备案处于阿里云初审阶段；本次没有配置正式域名入口或公网HTTPS。具体状态见[更新说明](../docs/2026-11-20%20更新说明.md)。
+2026-11-24已配置独立公网IP的HTTPS技术入口，HTTP重定向、主页、登录和API检查通过，运行Cookie已启用Secure。域名未解析、备案仍审核中；IP入口可达不等于已完成正式发布要求。配置与操作见[公网入口说明](public-entry/README.md)，事实状态见[配置记录](../docs/2026-11-24%20公网入口配置记录.md)。
+
+2026-11-25已更新固定页头/导航布局，私有回环网页和独立公网入口使用同一新前端镜像。Java后端容器与数据卷保留，详见[本次更新记录](../docs/2026-11-25%20固定导航与页面滚动更新.md)。11月20日的部署说明仅代表当日的受限入口阶段。
 
 ## 构建与目录
 
 使用 Java 21、Node.js >=22.18 在开发机运行后端完整测试和 `mvnw package`、前端 `npm ci && npm test`、worker `npm test`。后端真实数据库测试必须连接独立测试库。前端发布必须使用全新输出目录，避免开发机旧 dist 残留历史散列文件：在 frontend 目录运行 `npm run build -- --outDir ABSOLUTE_NEW_DIRECTORY`，将本次生成的文件复制到全新的镜像上下文 `frontend/`。将构建后的 JAR 命名为 `backend.jar`，再加入本目录两个 Dockerfile 和 nginx.conf。
 
-使用 `backend.Dockerfile`、`web.Dockerfile` 构建带唯一发布号的 `college-booking-backend:RELEASE_ID`、`college-booking-web:RELEASE_ID`。在开发机导出、上传并在云端 `docker load`，避免在 2 GB 主机上编译。官方基础镜像应记录实际 digest，不从不明第三方镜像代理取得软件。
+使用 `backend.Dockerfile`、`web.Dockerfile` 构建带唯一发布号的 `college-booking-backend:RELEASE_ID`、`college-booking-web:RELEASE_ID`。在开发机导出、上传并在云端 `docker load`，避免在 2 GB 主机上编译。官方基础镜像应记录实际 digest，不从不明第三方镜像代理取得软件。网页镜像仅对静态资源目录补齐读取/目录遍历权限，运行身份仍为101；发布前须以该身份确认脚本可读，发布后逐文件比对两个入口的资源SHA256，不能只检查主页或健康接口。
 
 云端布局：
 
@@ -28,20 +30,20 @@ PostgreSQL 与上传图片分别存入 `college-booking_postgres-data`、`colleg
 
 ## 启动与访问
 
-已部署环境日常使用时，先确认ECS处于运行状态；Windows联网登录后，计划任务自动启动本机隧道和worker，再打开 `http://127.0.0.1:18080`。如果此前手动禁用了本机任务，在PowerShell依次执行以下命令恢复：
+已部署环境日常使用时，确认ECS处于运行状态后，浏览器打开 `https://8.155.137.77`。Windows联网登录后，计划任务自动启动本机隧道和worker，负责自动过期和提醒。原 `http://127.0.0.1:18080` 保留用于隧道调试，账号登录使用HTTPS入口。如果此前手动禁用了本机任务，在PowerShell依次执行以下命令恢复：
 
 ```powershell
 Enable-ScheduledTask -TaskName CollegeBookingCloudWorker
 Start-ScheduledTask -TaskName CollegeBookingCloudWorker
 ```
 
-若此前手动停止了云端容器，在云端管理员终端执行 `systemctl start docker`，然后执行 `/opt/college-booking/current/compose.sh up -d --wait --wait-timeout 240`，最后执行 `/opt/college-booking/current/compose.sh ps` 确认三个服务健康。日常恢复不需要重新构建镜像或再次初始化管理员。其他电脑和手机不能通过自己的127.0.0.1地址访问这台电脑的隧道。
+若此前手动停止了云端容器，在云端管理员终端执行 `systemctl start docker`，然后执行 `/opt/college-booking/current/compose.sh up -d --wait --wait-timeout 240`。再执行 `docker compose --env-file /opt/college-booking/public-entry/entry.env -f /opt/college-booking/public-entry/compose.yaml up -d --wait --wait-timeout 90 entry` 恢复独立公网入口，确认四个容器健康。日常恢复不需要重新构建镜像或再次初始化管理员。其他电脑和手机不能通过自己的127.0.0.1地址访问这台电脑的隧道。
 
 下面的激活操作用于首次发布或切换版本：
 
 执行 `/opt/college-booking/releases/RELEASE_ID/activate.sh RELEASE_ID`；成功后通过 `current/compose.sh ps`、`current/compose.sh logs --tail 100` 检查状态。后端会自动执行尚未执行的 Flyway 迁移。
 
-默认入口仅绑定云端 `127.0.0.1:18080`，数据库和后端不发布主机端口。测试阶段允许 `SESSION_COOKIE_SECURE=false`，仅因浏览器访问的是 SSH 隧道的本机 HTTP 地址；公网环境必须恢复 true 并使用可信 HTTPS，不能直接把本配置的监听地址改为 `0.0.0.0` 后开放。
+主应用网页仅绑定云端 `127.0.0.1:18080`，数据库和后端不发布主机端口；独立入口负责公网80/443。当前 `SESSION_COOKIE_SECURE=true`，需可信HTTPS完成账号登录。早期隧道部署的false配置已停用，不应再将其复制回云端。
 
 创建专用于转发的 SSH 用户，公钥限制 `restrict,port-forwarding,permitopen="127.0.0.1:18080",command="/bin/false"`，该用户不加入 sudo 或 docker 组。先通过 Workbench 获取服务器 SSH 主机公钥并核对，保存到专用 known_hosts，启用严格主机校验。私钥保存在本机受限目录，不上传 GitHub。
 
