@@ -241,7 +241,7 @@ useReloadOnReturn(async () => { locations.value = await getLocations().catch(() 
                   <button class="primary-button" type="button" :disabled="editSaving" @click="saveDetails(item)">{{ editSaving ? '保存中…' : '保存物品设置' }}</button>
 
                   <p v-if="editMessage" class="notice" role="status">{{ editMessage }}</p>
-                  <div class="item-edit-photos"><h3>展示照片</h3><div v-for="image in images[item.id]" :key="image.id" class="item-edit-photo"><img :src="image.url" :alt="image.fileName"><button class="link-button" type="button" @click="removePhoto(item,image)">删除</button></div><input type="file" accept="image/jpeg,image/png,image/webp" @change="imageFile=$event.target.files?.[0]||null"><button class="refresh-button" type="button" :disabled="!imageFile||editSaving" @click="addPhoto(item)">上传照片</button></div>
+                  <div class="item-edit-photos"><h3>展示照片</h3><div v-for="image in images[item.id]" :key="image.id" class="item-edit-photo"><img :src="`${image.url}?thumbnail=true`" loading="lazy" decoding="async" :alt="image.fileName"><button class="link-button" type="button" @click="removePhoto(item,image)">删除</button></div><input type="file" accept="image/jpeg,image/png,image/webp" @change="imageFile=$event.target.files?.[0]||null"><button class="refresh-button" type="button" :disabled="!imageFile||editSaving" @click="addPhoto(item)">上传照片</button></div>
                   <h3>实物编号与状态</h3>
                   <div class="unit-input-row">
 

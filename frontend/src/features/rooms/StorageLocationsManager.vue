@@ -1,20 +1,23 @@
 <script setup>
-import { useReloadOnReturn } from '../../lib/useReloadOnReturn'
-import { computed, onMounted, reactive, ref } from 'vue'
-import { createLocation, getLocations, uploadLocationImage, updateLocation, removeLocation } from '../../lib/api'
+import { computed, reactive, ref } from 'vue'
+import { createLocation, uploadLocationImage, updateLocation, removeLocation } from '../../lib/api'
 import BookingModal from '../../components/BookingModal.vue'
-const props=defineProps({type:{type:String,default:'OFFICE'}})
+const props = defineProps({
+  type: { type: String, required: true },
+  locations: { type: Array, default: null },
+  loadError: { type: String, default: '' },
+  reload: { type: Function, required: true }
+})
 const label=computed(()=>props.type==='OFFICE'?'办公室':'物资室')
-const visibleLocations=computed(()=>locations.value.filter(x=>x.type===props.type&&x.status==='ACTIVE'))
+const visibleLocations=computed(()=>(props.locations || []).filter(x=>x.type===props.type&&x.status==='ACTIVE'))
 function openCreate(){editing.value={id:null};form.name='';form.type=props.type;modalError.value=''}
-const locations=ref([]), files=ref({}), busy=ref(null), error=ref(''), message=ref(''), imageVersion=ref({})
+const files=ref({}), busy=ref(null), error=ref(''), message=ref(''), imageVersion=ref({})
 const editing=ref(null), removing=ref(null), modalError=ref('')
 const form=reactive({name:'',type:'OFFICE'})
-async function load(){try{locations.value=await getLocations()}catch(e){error.value=e.message||'地点读取失败'}}
 async function upload(location){
   const file=files.value[location.id];if(!file||busy.value!==null)return
   busy.value=location.id;error.value='';message.value=''
-  try{await uploadLocationImage(location.id,file);files.value[location.id]=null;imageVersion.value[location.id]=Date.now();await load();message.value=`${location.name}的照片已更新。`}
+  try{await uploadLocationImage(location.id,file);files.value[location.id]=null;imageVersion.value[location.id]=Date.now();await props.reload();message.value=`${location.name}的照片已更新。`}
   catch(e){error.value=e.message||'照片上传失败'}finally{busy.value=null}
 }
 function openEdit(location){editing.value=location;form.name=location.name;form.type=location.type;modalError.value=''}
@@ -22,24 +25,23 @@ function openRemove(location){removing.value=location;modalError.value=''}
 async function save(){
   if(busy.value!==null)return
   busy.value=editing.value.id ?? 'new';modalError.value=''
-  try{await (editing.value.id ? updateLocation(editing.value.id,{name:form.name,type:form.type}) : createLocation({name:form.name,type:form.type}));editing.value=null;await load();message.value='地点信息已更新。'}catch(e){modalError.value=e.message||'保存失败'}finally{busy.value=null}
+  try{await (editing.value.id ? updateLocation(editing.value.id,{name:form.name,type:form.type}) : createLocation({name:form.name,type:form.type}));editing.value=null;await props.reload();message.value='地点信息已更新。'}catch(e){modalError.value=e.message||'保存失败'}finally{busy.value=null}
 }
 async function remove(){
   if(busy.value!==null)return
   busy.value=removing.value.id;modalError.value=''
-  try{await removeLocation(removing.value.id);removing.value=null;await load();message.value='地点已移除，历史记录仍会保留。'}catch(e){modalError.value=e.message||'移除失败'}finally{busy.value=null}
+  try{await removeLocation(removing.value.id);removing.value=null;await props.reload();message.value='地点已移除，历史记录仍会保留。'}catch(e){modalError.value=e.message||'移除失败'}finally{busy.value=null}
 }
-onMounted(load)
-useReloadOnReturn(load)
 </script>
 <template>
   <div class="storage-locations">
     <div class="section-heading"><h2>{{ label }}</h2><button class="primary-button" type="button" @click="openCreate">新增{{ label }}</button></div>
-    <p v-if="error" class="state-card error-card" role="alert">{{ error }}</p><p v-if="message" class="notice" role="status">{{ message }}</p>
-    <p v-if="visibleLocations.length === 0" class="state-card">暂无{{ label }}，可点击右上方新增。</p>
+    <p v-if="error || loadError" class="state-card error-card" role="alert">{{ error || loadError }} <button v-if="loadError" type="button" class="link-button" @click="reload">重试</button></p><p v-if="message" class="notice" role="status">{{ message }}</p>
+    <p v-if="locations === null && !loadError" class="state-card" role="status">正在读取地点…</p>
+    <p v-else-if="locations && visibleLocations.length === 0 && !loadError" class="state-card">暂无{{ label }}，可点击右上方新增。</p>
     <div class="storage-grid">
-      <article v-for="location in visibleLocations" :key="location.id" class="storage-card">
-        <div class="storage-photo"><img v-if="location.imageUrl" :src="`${location.imageUrl}?thumbnail=true&v=${imageVersion[location.id] || ''}`" loading="lazy" decoding="async" :alt="location.name"><span v-else>暂无照片</span></div>
+      <article v-for="(location, index) in visibleLocations" :key="location.id" class="storage-card">
+        <div class="storage-photo"><img v-if="location.imageUrl" :src="`${location.imageUrl}?thumbnail=true${imageVersion[location.id] ? '&v=' + imageVersion[location.id] : ''}`" :loading="index < 3 ? 'eager' : 'lazy'" :fetchpriority="index === 0 ? 'high' : 'auto'" decoding="async" :alt="location.name"><span v-else>暂无照片</span></div>
         <div class="storage-body"><strong>{{ location.name }}</strong><small>{{ location.type === 'OFFICE' ? '办公室' : '物资室' }}</small>
           <label class="field"><span>展示照片（JPG/PNG，最大 5 MB）</span><input type="file" accept="image/jpeg,image/png" @change="files[location.id]=$event.target.files?.[0] || null"></label>
           <div class="storage-actions"><button class="refresh-button" type="button" :disabled="!files[location.id] || busy !== null" @click="upload(location)">{{ busy === location.id ? '上传中…' : '保存照片' }}</button>

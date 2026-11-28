@@ -118,11 +118,11 @@ useReloadOnReturn(loadSpaces)
     <p v-if="bookingMessage" class="success-banner" role="status">{{ bookingMessage }}</p>
     <p class="section-sub">选择未来一周内的整点时段，地点预约需审核。</p>
     <p v-if="error" class="state-card error-card" role="alert">{{ error }}</p>
-    <p v-if="loading" class="state-card" role="status">正在读取地点…</p>
+    <p v-if="loading && !spaces.length" class="state-card" role="status">正在读取地点…</p>
     <p v-else-if="!spaces.length && !error" class="state-card">暂时没有开放预约的地点。</p>
     <div v-else class="space-cards">
-      <article v-for="space in spaces" :key="space.id" class="space-card" :class="{ chosen: selectedSpace?.id === space.id }">
-        <div class="space-cover"><img v-if="space.imageUrl" :src="space.imageUrl" :alt="`${space.name}的照片`"><span v-else aria-hidden="true">⌂</span></div>
+      <article v-for="(space, index) in spaces" :key="space.id" class="space-card" :class="{ chosen: selectedSpace?.id === space.id }">
+        <div class="space-cover"><img v-if="space.imageUrl" :src="`${space.imageUrl}?thumbnail=true`" :loading="index < 3 ? 'eager' : 'lazy'" :fetchpriority="index === 0 ? 'high' : 'auto'" decoding="async" :alt="`${space.name}的照片`"><span v-else aria-hidden="true">⌂</span></div>
         <div class="space-card-body">
           <div class="space-card-top"><h2>{{ space.name }}</h2><span>可容纳 {{ space.capacity }} 人</span></div>
           <p>{{ space.description || '暂无详细介绍。' }}</p>

@@ -1,12 +1,29 @@
 <script setup>
 import { useReloadOnReturn } from '../../lib/useReloadOnReturn'
 import { onMounted, ref } from 'vue'
-import { createSpace, getSpaces, uploadSpaceImage, updateSpace, removeSpace } from '../../lib/api'
+import { createSpace, getLocations, getSpaces, uploadSpaceImage, updateSpace, removeSpace } from '../../lib/api'
 import BookingModal from '../../components/BookingModal.vue'
 import StorageLocationsManager from './StorageLocationsManager.vue'
 
 const activeTab = ref('spaces')
 const spaces = ref([])
+const imageVersion = ref({})
+const locations = ref(null)
+const locationsError = ref('')
+let locationsRequest = 0
+
+async function loadLocations() {
+  const request = ++locationsRequest
+  try {
+    const result = await getLocations()
+    if (request === locationsRequest) {
+      locations.value = result
+      locationsError.value = ''
+    }
+  } catch (cause) {
+    if (request === locationsRequest) locationsError.value = cause.message || '读取存放地点失败。'
+  }
+}
 const name = ref('')
 const description = ref('')
 const capacity = ref(20)
@@ -25,7 +42,7 @@ async function saveEdit() {
   try {
     const saved=await updateSpace(editing.value.id, {name:editing.value.name.trim(), description:editing.value.description.trim(), capacity:Number(editing.value.capacity)})
     if (editPhoto.value) {
-      try { await uploadSpaceImage(saved.id, editPhoto.value) }
+      try { await uploadSpaceImage(saved.id, editPhoto.value); imageVersion.value[saved.id] = Date.now() }
       catch (cause) { formError.value=`地点信息已保存，但照片更新失败：${cause.message}。可重试上传。`; await load(); return }
     }
     editing.value=null; editPhoto.value=null; message.value=`${saved.name}的信息已保存。`; await load()
@@ -53,37 +70,41 @@ async function submit() {
       catch { photoFailed = true }
     }
     name.value = ''; description.value = ''; capacity.value = 20; photo.value = null; creating.value=false
-    message.value = photoFailed ? `${space.name}已创建，但照片上传失败，可点击编辑地点重新上传。` : `${space.name}已加入地点预约。`
+    message.value = photoFailed ? `${space.name}已创建，但照片上传失败，可点击编辑会议室重新上传。` : `${space.name}已加入地点预约。`
     await load()
   } catch (cause) { formError.value = cause.message || '新增地点失败，请重试。' }
   finally { saving.value = false }
 }
-onMounted(load)
-useReloadOnReturn(load)
+function refreshPage() {
+  load()
+  loadLocations()
+}
+onMounted(refreshPage)
+useReloadOnReturn(refreshPage)
 </script>
 
 <template>
   <section class="content-section space-management">
-    <div class="section-heading"><div><h1>地点管理</h1></div><div v-if="activeTab === 'spaces'" class="space-actions"><button class="primary-button" type="button" @click="formError=''; creating=true">新增地点</button></div></div>
+    <div class="section-heading"><div><h1>地点管理</h1></div><div v-if="activeTab === 'spaces'" class="space-actions"><button class="primary-button" type="button" @click="formError=''; creating=true">新增会议室</button></div></div>
     <div class="location-tabs" aria-label="地点类型">
-      <button type="button" :class="{ active: activeTab === 'spaces' }" @click="activeTab='spaces'">预约地点</button>
+      <button type="button" :class="{ active: activeTab === 'spaces' }" @click="activeTab='spaces'">会议室</button>
       <button type="button" :class="{ active: activeTab === 'office' }" @click="activeTab='office'">办公室</button>
       <button type="button" :class="{ active: activeTab === 'storage' }" @click="activeTab='storage'">物资室</button>
     </div>
-    <StorageLocationsManager v-if="activeTab !== 'spaces'" :key="activeTab" :type="activeTab === 'office' ? 'OFFICE' : 'STORAGE'" />
+    <StorageLocationsManager v-if="activeTab !== 'spaces'" :key="activeTab" :locations="locations" :load-error="locationsError" :reload="loadLocations" :type="activeTab === 'office' ? 'OFFICE' : 'STORAGE'" />
     <template v-else>
-    <p class="section-sub">新增可预约的会议室或其他活动地点，并上传展示照片。地点申请均进入审核工作台。</p>
-    <BookingModal v-if="creating" title="新增地点" :busy="saving" @close="creating=false">
+    <p class="section-sub">会议室预约申请由审核员在审核工作台处理。</p>
+    <BookingModal v-if="creating" title="新增会议室" :busy="saving" @close="creating=false">
       <form class="space-create" @submit.prevent="submit">
       <div class="field-row"><label class="field"><span>名称</span><input v-model="name" type="text" maxlength="100" required placeholder="例如：会议室三"></label>
         <label class="field"><span>容纳人数</span><input v-model.number="capacity" type="number" min="1" max="1000" required></label></div>
       <label class="field"><span>地点介绍</span><textarea v-model="description" maxlength="500" rows="3" placeholder="位置、设备、适合的活动等"></textarea></label>
       <label class="field"><span>展示照片（JPG/PNG，最大 5 MB）</span><input type="file" accept="image/jpeg,image/png" @change="photo = $event.target.files?.[0] || null"></label>
       <p v-if="formError" class="field-error" role="alert">{{ formError }}</p>
-      <button class="primary-button" type="submit" :disabled="saving">{{ saving ? '保存中…' : '新增地点' }}</button>
+      <button class="primary-button" type="submit" :disabled="saving">{{ saving ? '保存中…' : '新增会议室' }}</button>
       </form>
     </BookingModal>
-    <BookingModal v-if="editing" title="编辑地点" :busy="saving" @close="editing=null">
+    <BookingModal v-if="editing" title="编辑会议室" :busy="saving" @close="editing=null">
       <form class="space-create" @submit.prevent="saveEdit">
         <div class="field-row">
           <label class="field"><span>名称</span><input v-model.trim="editing.name" type="text" maxlength="100" required></label>
@@ -98,11 +119,11 @@ useReloadOnReturn(load)
     <p v-if="error" class="state-card error-card" role="alert">{{ error }}</p>
     <p v-if="message" class="notice" role="status">{{ message }}</p>
     <div class="space-manage-grid">
-      <article v-for="space in spaces" :key="space.id" class="item-card space-manage-card">
-        <img v-if="space.imageUrl" :src="`${space.imageUrl}?thumbnail=true&v=${space.id}-${message}`" loading="lazy" decoding="async" :alt="`${space.name}的照片`">
+      <article v-for="(space, index) in spaces" :key="space.id" class="item-card space-manage-card">
+        <img v-if="space.imageUrl" :src="`${space.imageUrl}?thumbnail=true${imageVersion[space.id] ? '&v=' + imageVersion[space.id] : ''}`" :loading="index < 3 ? 'eager' : 'lazy'" :fetchpriority="index === 0 ? 'high' : 'auto'" decoding="async" :alt="`${space.name}的照片`">
         <div v-else class="space-photo-empty">尚未上传照片</div>
         <div class="space-manage-body"><h3>{{ space.name }}</h3><p>{{ space.description || '暂无介绍' }}</p><small>可容纳 {{ space.capacity }} 人</small>
-          <div class="space-actions"><button class="refresh-button" type="button" :disabled="saving" @click="openEdit(space)">编辑地点</button><button class="link-button remove-space" type="button" :disabled="saving" @click="remove(space)">移除地点</button></div>
+          <div class="space-actions"><button class="refresh-button" type="button" :disabled="saving" @click="openEdit(space)">编辑会议室</button><button class="link-button remove-space" type="button" :disabled="saving" @click="remove(space)">移除地点</button></div>
         </div>
       </article>
     </div>

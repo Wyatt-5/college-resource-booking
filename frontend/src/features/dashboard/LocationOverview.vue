@@ -23,15 +23,15 @@
 
     </div>
 
-    <p v-if="loading" class="state-card" role="status">正在读取存放地点…</p>
+    <p v-if="loading && !overview" class="state-card" role="status">正在读取存放地点…</p>
     <div v-else-if="error" class="state-card error-card" role="alert">{{ error }} <button class="link-button" type="button" @click="load">重试</button></div>
     <p v-else-if="!overview?.locations.length" class="state-card">暂时没有存放地点。</p>
     <div v-else class="location-overview-grid">
-      <button v-for="location in overview.locations" :key="location.id" class="location-overview-card"
+      <button v-for="(location, index) in overview.locations" :key="location.id" class="location-overview-card"
         type="button" :disabled="location.status !== 'ACTIVE'"
         :aria-label="`查看${location.name}的物品，${location.itemCount}种物品，${location.availableUnits}件当前可借`"
         @click="emit('open-location', location)">
-        <img v-if="location.imageUrl" class="location-overview-photo" :src="`${location.imageUrl}?thumbnail=true`" loading="lazy" decoding="async" :alt="`${location.name}照片`">
+        <img v-if="location.imageUrl" class="location-overview-photo" :src="`${location.imageUrl}?thumbnail=true`" :loading="index < 3 ? 'eager' : 'lazy'" :fetchpriority="index === 0 ? 'high' : 'auto'" decoding="async" :alt="`${location.name}照片`">
         <span v-else class="location-overview-icon" aria-hidden="true">{{ typeLabel(location.type).slice(0, 1) }}</span>
         <span class="location-overview-body">
           <span class="location-overview-type">{{ typeLabel(location.type) }}</span>
