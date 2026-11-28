@@ -18,10 +18,9 @@ public class ItemImageController {
         ItemImage image=service.upload(itemId,file);return ResponseEntity.created(URI.create(image.url())).body(image);
     }
     @GetMapping("/api/v1/items/{itemId}/images/{imageId}")
-    public ResponseEntity<byte[]> read(@PathVariable long itemId,@PathVariable long imageId)throws IOException{
+    public ResponseEntity<byte[]> read(@PathVariable long itemId,@PathVariable long imageId, @org.springframework.web.bind.annotation.RequestParam(defaultValue="false") boolean thumbnail)throws IOException{
         var content=service.read(itemId,imageId);
-        return ResponseEntity.ok().contentType(MediaType.parseMediaType(content.contentType()))
-                .header("X-Content-Type-Options","nosniff").cacheControl(CacheControl.noStore()).body(content.bytes());
+        return edu.college.booking.common.DisplayImage.response(content.bytes(), content.contentType(), thumbnail);
     }
     @DeleteMapping("/api/v1/items/{itemId}/images/{imageId}")
     public ResponseEntity<Void> delete(@PathVariable long itemId,@PathVariable long imageId){

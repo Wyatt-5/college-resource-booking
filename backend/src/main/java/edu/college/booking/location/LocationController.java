@@ -22,6 +22,12 @@ public class LocationController {
         this.service = service;
     }
 
+    @PostMapping("/api/v1/locations")
+    public ResponseEntity<Location> create(Authentication authentication, @org.springframework.web.bind.annotation.RequestBody LocationService.LocationInput input) {
+        var location = service.create(authentication, input);
+        return ResponseEntity.created(java.net.URI.create("/api/v1/locations/" + location.id())).body(location);
+    }
+
     @org.springframework.web.bind.annotation.PatchMapping("/api/v1/locations/{id}")
     public Location update(Authentication authentication, @PathVariable long id, @org.springframework.web.bind.annotation.RequestBody LocationService.LocationInput input) {
         return service.update(authentication, id, input);
@@ -40,10 +46,9 @@ public class LocationController {
     }
 
     @GetMapping("/api/v1/locations/{id}/image")
-    public ResponseEntity<byte[]> image(@PathVariable long id) {
+    public ResponseEntity<byte[]> image(@PathVariable long id, @org.springframework.web.bind.annotation.RequestParam(defaultValue="false") boolean thumbnail) throws IOException {
         var image = service.image(id);
-        return ResponseEntity.ok().contentType(MediaType.parseMediaType(image.contentType()))
-                .header("X-Content-Type-Options", "nosniff").cacheControl(CacheControl.noStore()).body(image.bytes());
+        return edu.college.booking.common.DisplayImage.response(image.bytes(), image.contentType(), thumbnail);
     }
 
     @GetMapping("/api/v1/locations")

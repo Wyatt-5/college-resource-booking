@@ -456,6 +456,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
   /locations:
+    post:
+      summary: 管理员新增办公室或物资室
+      description: 仅开放地点的名称必须唯一；已移除地点保留历史，名称可供新地点复用。需要会话和CSRF令牌。
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, type]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 100}
+                type: {type: string, enum: [OFFICE, STORAGE]}
+      responses:
+        '201':
+          description: 已新增
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Location'}
+        '400': {description: 名称或类型无效}
+        '403': {description: 无管理权限或CSRF无效}
+        '409': {description: 开放地点名称重复}
     get:
       summary: 获取初始存放地点
       operationId: listLocations
@@ -756,6 +779,10 @@ paths:
     get:
       summary: 查看存放地点照片
       parameters:
+      - name: thumbnail
+        in: query
+        description: true返回最长边480px的JPEG展示缩略图，原图保持不变；支持ETag条件请求304，私有缓存必须重新验证权限与版本。
+        schema: {type: boolean, default: false}
       - name: id
         in: path
         required: true
@@ -1095,6 +1122,10 @@ paths:
       summary: 读取物品展示照片二进制
       operationId: readItemImage
       parameters:
+      - name: thumbnail
+        in: query
+        description: true返回最长边480px的JPEG展示缩略图，原图保持不变；支持ETag条件请求304，私有缓存必须重新验证权限与版本。
+        schema: {type: boolean, default: false}
       - $ref: '#/components/parameters/ItemId'
       - name: imageId
         in: path
@@ -1475,6 +1506,10 @@ paths:
       summary: 公开读取地点照片
       operationId: getSpaceImage
       parameters:
+      - name: thumbnail
+        in: query
+        description: true返回最长边480px的JPEG展示缩略图，原图保持不变；支持ETag条件请求304，私有缓存必须重新验证权限与版本。
+        schema: {type: boolean, default: false}
       - name: spaceId
         in: path
         required: true

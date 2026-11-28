@@ -60,10 +60,8 @@ public class SpaceController {
     }
 
     @GetMapping("/{id}/image")
-    public ResponseEntity<byte[]> image(@PathVariable long id) {
+    public ResponseEntity<byte[]> image(@PathVariable long id, @org.springframework.web.bind.annotation.RequestParam(defaultValue="false") boolean thumbnail) throws IOException {
         SpaceService.ImageContent image = service.image(id);
-        return ResponseEntity.ok().contentType(MediaType.parseMediaType(image.contentType()))
-                .header("X-Content-Type-Options", "nosniff").cacheControl(CacheControl.noStore())
-                .body(image.bytes());
+        return edu.college.booking.common.DisplayImage.response(image.bytes(), image.contentType(), thumbnail);
     }
 }

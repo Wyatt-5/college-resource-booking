@@ -237,7 +237,12 @@ class CatalogDatabaseTest {
         mvc.perform(get("/api/v1/items/"+item+"/images")).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1));
         mvc.perform(get("/api/v1/items/"+item+"/images/"+image))
           .andExpect(status().isOk()).andExpect(content().contentType("image/png"))
-          .andExpect(header().string("Cache-Control","no-store")).andExpect(content().bytes(png()));
+          .andExpect(header().string("Cache-Control","no-cache, private")).andExpect(content().bytes(png()));
+        String etag=mvc.perform(get("/api/v1/items/"+item+"/images/"+image).param("thumbnail","true"))
+          .andExpect(status().isOk()).andExpect(content().contentType("image/jpeg"))
+          .andReturn().getResponse().getHeader("ETag");
+        mvc.perform(get("/api/v1/items/"+item+"/images/"+image).param("thumbnail","true").header("If-None-Match",etag))
+          .andExpect(status().isNotModified()).andExpect(content().string(""));
         mvc.perform(patch("/api/v1/items/"+item).with(admin()).contentType("application/json").content("{\"status\":\"INACTIVE\"}"))
           .andExpect(status().isOk());
         mvc.perform(get("/api/v1/items/"+item+"/images/"+image)).andExpect(status().isUnauthorized());

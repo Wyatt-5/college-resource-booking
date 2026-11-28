@@ -27,6 +27,28 @@ public class LocationService {
     public List<Location> listLocations() { return repository.findAll(); }
     public record LocationInput(String name, String type) {}
 
+    private void validate(LocationInput input) {
+        if (input == null || input.name() == null || input.name().isBlank() || input.name().strip().length() > 100
+                || !("OFFICE".equals(input.type()) || "STORAGE".equals(input.type())))
+            throw new ApiProblem(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "请输入地点名称并选择地点类型");
+    }
+
+    @Transactional
+    public Location create(Authentication authentication, LocationInput input) {
+        var actor = authorization.requireSpaceManager(authentication);
+        validate(input);
+        long id;
+        try {
+            id = db.queryForObject("INSERT INTO locations(name,type) VALUES (?,?) RETURNING id", Long.class,
+                    input.name().strip(), input.type());
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            throw new ApiProblem(HttpStatus.CONFLICT, "DUPLICATE_NAME", "已有使用此名称的开放地点，请使用其他名称");
+        }
+        var after = repository.findAll().stream().filter(location -> location.id() == id).findFirst().orElseThrow();
+        audit.record(actor.id(), "LOCATION_CREATED", "LOCATION", id, null, after);
+        return after;
+    }
+
     private Location lockActive(long id) {
         var rows = db.query("SELECT id FROM locations WHERE id=? AND status='ACTIVE' FOR UPDATE", (rs, n) -> rs.getLong(1), id);
         if (rows.isEmpty()) throw new ApiProblem(HttpStatus.NOT_FOUND, "NOT_FOUND", "地点不存在或已移除");
@@ -37,9 +59,7 @@ public class LocationService {
     public Location update(Authentication authentication, long id, LocationInput input) {
         var actor = authorization.requireSpaceManager(authentication);
         var before = lockActive(id);
-        if (input == null || input.name() == null || input.name().isBlank() || input.name().strip().length() > 100
-                || !("OFFICE".equals(input.type()) || "STORAGE".equals(input.type())))
-            throw new ApiProblem(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "请输入地点名称并选择地点类型");
+        validate(input);
         try {
             db.update("UPDATE locations SET name=?, type=? WHERE id=?", input.name().strip(), input.type(), id);
         } catch (org.springframework.dao.DuplicateKeyException e) {

@@ -647,6 +647,7 @@ export const getReturnReminders = ({ managed = false, page = 0, size = 20 } = {}
 export const createFeedback = content => postJson('/feedback', { content })
 export const handleFeedback = (id, payload) => putJson(`/feedback/${id}`, payload)
 
+export const createLocation = (payload) => postJson('/locations', payload)
 export const updateLocation = (id, payload) => patchJson(`/locations/${id}`, payload)
 export async function removeLocation(id) {
   const csrf = await ensureCsrf()

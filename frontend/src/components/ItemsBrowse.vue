@@ -43,7 +43,7 @@
     <div v-else class="items-grid">
       <article v-for="item in visibleItems" :key="item.id" class="item-card">
         <div class="item-photo">
-          <img v-if="item.images?.length" class="item-cover" :src="item.images[0].url" :alt="`${item.name}的展示照片`">
+          <img v-if="item.images?.length" class="item-cover" :src="`${item.images[0].url}?thumbnail=true`" loading="lazy" decoding="async" :alt="`${item.name}的展示照片`">
           <span v-else aria-hidden="true">📦</span>
           <span v-if="(item.images || []).length > 0" class="photo-count">{{ item.images.length }} 张照片</span>
         </div>

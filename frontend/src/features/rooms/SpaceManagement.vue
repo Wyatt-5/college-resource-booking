@@ -67,9 +67,10 @@ useReloadOnReturn(load)
     <div class="section-heading"><div><h1>地点管理</h1></div><div v-if="activeTab === 'spaces'" class="space-actions"><button class="primary-button" type="button" @click="formError=''; creating=true">新增地点</button></div></div>
     <div class="location-tabs" aria-label="地点类型">
       <button type="button" :class="{ active: activeTab === 'spaces' }" @click="activeTab='spaces'">预约地点</button>
-      <button type="button" :class="{ active: activeTab === 'storage' }" @click="activeTab='storage'">办公室与物资室</button>
+      <button type="button" :class="{ active: activeTab === 'office' }" @click="activeTab='office'">办公室</button>
+      <button type="button" :class="{ active: activeTab === 'storage' }" @click="activeTab='storage'">物资室</button>
     </div>
-    <StorageLocationsManager v-if="activeTab === 'storage'" />
+    <StorageLocationsManager v-if="activeTab !== 'spaces'" :key="activeTab" :type="activeTab === 'office' ? 'OFFICE' : 'STORAGE'" />
     <template v-else>
     <p class="section-sub">新增可预约的会议室或其他活动地点，并上传展示照片。地点申请均进入审核工作台。</p>
     <BookingModal v-if="creating" title="新增地点" :busy="saving" @close="creating=false">
@@ -98,7 +99,7 @@ useReloadOnReturn(load)
     <p v-if="message" class="notice" role="status">{{ message }}</p>
     <div class="space-manage-grid">
       <article v-for="space in spaces" :key="space.id" class="item-card space-manage-card">
-        <img v-if="space.imageUrl" :src="`${space.imageUrl}?v=${space.id}-${message}`" :alt="`${space.name}的照片`">
+        <img v-if="space.imageUrl" :src="`${space.imageUrl}?thumbnail=true&v=${space.id}-${message}`" loading="lazy" decoding="async" :alt="`${space.name}的照片`">
         <div v-else class="space-photo-empty">尚未上传照片</div>
         <div class="space-manage-body"><h3>{{ space.name }}</h3><p>{{ space.description || '暂无介绍' }}</p><small>可容纳 {{ space.capacity }} 人</small>
           <div class="space-actions"><button class="refresh-button" type="button" :disabled="saving" @click="openEdit(space)">编辑地点</button><button class="link-button remove-space" type="button" :disabled="saving" @click="remove(space)">移除地点</button></div>

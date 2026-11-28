@@ -20,6 +20,28 @@ import org.springframework.transaction.annotation.Transactional;
 class LocationImageDatabaseTest {
     @Autowired LocationService locations;
     @Autowired JdbcTemplate db;
+    private UsernamePasswordAuthenticationToken manager() {
+        String login="location-"+UUID.randomUUID();
+        long id=db.queryForObject("INSERT INTO users(login_name,display_name,password_hash) VALUES (?,'地点审核员','hash') RETURNING id",Long.class,login);
+        db.update("INSERT INTO reviewer_memberships(user_id) VALUES (?)",id);
+        return new UsernamePasswordAuthenticationToken(login,"",List.of());
+    }
+    @Test void emptyLocationCanBeRemovedAndItsNameReusedWithoutReactivatingHistory() {
+        var auth=manager();String name="复用-"+UUID.randomUUID();
+        var old=locations.create(auth,new LocationService.LocationInput(name,"STORAGE"));
+        locations.remove(auth,old.id());
+        var replacement=locations.create(auth,new LocationService.LocationInput(name,"OFFICE"));
+        assertNotEquals(old.id(),replacement.id());
+        assertEquals("INACTIVE",db.queryForObject("SELECT status FROM locations WHERE id=?",String.class,old.id()));
+        locations.remove(auth,replacement.id());
+        var renamed=locations.create(auth,new LocationService.LocationInput(name+"另一处","OFFICE"));
+        assertEquals(name,locations.update(auth,renamed.id(),new LocationService.LocationInput(name,"STORAGE")).name());
+    }
+    @Test void activeDuplicateNameIsStillRejected() {
+        var auth=manager();String name="重复-"+UUID.randomUUID();
+        locations.create(auth,new LocationService.LocationInput(name,"OFFICE"));
+        assertThrows(ApiProblem.class,()->locations.create(auth,new LocationService.LocationInput(name,"STORAGE")));
+    }
     @Test void reviewerCanUploadPhotoAndOrdinaryUserCannot() throws Exception {
         String suffix=UUID.randomUUID().toString().substring(0,10);
         String reviewer="photo-review-"+suffix, regular="photo-user-"+suffix;
